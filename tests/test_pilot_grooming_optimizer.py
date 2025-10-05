@@ -4,8 +4,13 @@ import pytest
 import tempfile
 import sys
 from pathlib import Path
-from pilot_grooming_optimizer import parse_arguments
 
+from pilot_grooming_optimizer import parse_arguments, load_pilot_data
+
+
+# =============================================================================
+# Tests for Unit 1: Parse Command Line Arguments
+# =============================================================================
 
 def test_all_required_args():
     """Test that all required arguments are parsed correctly with defaults."""
@@ -121,7 +126,6 @@ def test_explicit_args_override_sys_argv():
             sys.argv = original_argv
 
 
-# Additional edge case tests
 def test_custom_optional_args():
     """Test parsing with custom optional arguments."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -179,3 +183,130 @@ def test_invalid_expected_frames():
         args = ['--data-dir', tmpdir, '--output', 'out.json', '--expected-frames', '0']
         with pytest.raises((ValueError, SystemExit)):
             parse_arguments(args)
+
+
+# =============================================================================
+# Tests for Unit 2: Load Pilot Data
+# =============================================================================
+
+def test_two_genotypes_multiple_files(tmp_path):
+    """Test loading data from two genotypes with multiple CSV files."""
+    # Create directory structure
+    genotype_a = tmp_path / "genotype_A"
+    genotype_b = tmp_path / "genotype_B"
+    genotype_a.mkdir()
+    genotype_b.mkdir()
+    
+    # Create CSV files for genotype A
+    csv_a1 = genotype_a / "fly1.csv"
+    csv_a1.write_text("Frame\n100\n150\n200\n250\n")
+    
+    csv_a2 = genotype_a / "fly2.csv"
+    csv_a2.write_text("Frame\n50\n75\n300\n400\n")
+    
+    # Create CSV files for genotype B
+    csv_b1 = genotype_b / "fly1.csv"
+    csv_b1.write_text("Frame\n1000\n1500\n2000\n2500\n")
+    
+    # Load data
+    pilot_data, frame_counts = load_pilot_data(str(tmp_path))
+    
+    # Verify structure
+    assert len(pilot_data) == 2
+    assert "genotype_A" in pilot_data
+    assert "genotype_B" in pilot_data
+    
+    # Verify genotype A data
+    assert len(pilot_data["genotype_A"]) == 2
+    assert pilot_data["genotype_A"][0] == [(100, 150), (200, 250)]
+    assert pilot_data["genotype_A"][1] == [(50, 75), (300, 400)]
+    
+    # Verify genotype B data
+    assert len(pilot_data["genotype_B"]) == 1
+    assert pilot_data["genotype_B"][0] == [(1000, 1500), (2000, 2500)]
+    
+    # Verify frame counts (max end frame from each fly)
+    assert frame_counts["genotype_A"] == [250, 400]
+    assert frame_counts["genotype_B"] == [2500]
+
+
+def test_single_genotype(tmp_path):
+    """Test that single genotype raises ValueError."""
+    # Create only one genotype directory
+    genotype_a = tmp_path / "genotype_A"
+    genotype_a.mkdir()
+    
+    csv_a1 = genotype_a / "fly1.csv"
+    csv_a1.write_text("Frame\n100\n150\n")
+    
+    # Should raise ValueError requiring at least 2 genotypes
+    with pytest.raises(ValueError, match="At least 2 genotypes required"):
+        load_pilot_data(str(tmp_path))
+
+
+def test_empty_csv_file(tmp_path):
+    """Test handling of empty CSV files."""
+    # Create directory structure
+    genotype_a = tmp_path / "genotype_A"
+    genotype_b = tmp_path / "genotype_B"
+    genotype_a.mkdir()
+    genotype_b.mkdir()
+    
+    # Create CSV with data
+    csv_a1 = genotype_a / "fly1.csv"
+    csv_a1.write_text("Frame\n100\n150\n")
+    
+    # Create empty CSV (header only, no events)
+    csv_a2 = genotype_a / "fly2.csv"
+    csv_a2.write_text("Frame\n")
+    
+    # Create CSV with data for genotype B
+    csv_b1 = genotype_b / "fly1.csv"
+    csv_b1.write_text("Frame\n200\n250\n")
+    
+    # Load data
+    pilot_data, frame_counts = load_pilot_data(str(tmp_path))
+    
+    # Verify empty CSV is handled correctly
+    assert len(pilot_data["genotype_A"]) == 2
+    assert pilot_data["genotype_A"][0] == [(100, 150)]
+    assert pilot_data["genotype_A"][1] == []  # Empty events list for empty CSV
+    
+    # Frame count should be 0 for empty CSV (sentinel value)
+    assert frame_counts["genotype_A"][0] == 150
+    assert frame_counts["genotype_A"][1] == 0
+
+
+def test_mixed_frame_counts(tmp_path):
+    """Test handling of mixed frame counts within a genotype."""
+    # Create directory structure
+    genotype_a = tmp_path / "genotype_A"
+    genotype_b = tmp_path / "genotype_B"
+    genotype_a.mkdir()
+    genotype_b.mkdir()
+    
+    # Create CSVs with different frame counts for genotype A
+    csv_a1 = genotype_a / "fly1.csv"
+    csv_a1.write_text("Frame\n100\n150\n8900\n9000\n")
+    
+    csv_a2 = genotype_a / "fly2.csv"
+    csv_a2.write_text("Frame\n100\n150\n8900\n9010\n")
+    
+    csv_a3 = genotype_a / "fly3.csv"
+    csv_a3.write_text("Frame\n100\n150\n")
+    
+    # Create CSV for genotype B with different frame count
+    csv_b1 = genotype_b / "fly1.csv"
+    csv_b1.write_text("Frame\n100\n8995\n")
+    
+    # Load data
+    pilot_data, frame_counts = load_pilot_data(str(tmp_path))
+    
+    # Verify all frame counts are recorded correctly
+    # Files are processed in sorted order: fly1.csv, fly2.csv, fly3.csv
+    assert frame_counts["genotype_A"] == [9000, 9010, 150]
+    assert frame_counts["genotype_B"] == [8995]
+    
+    # Verify data structure is correct
+    assert len(pilot_data["genotype_A"]) == 3
+    assert len(pilot_data["genotype_B"]) == 1
