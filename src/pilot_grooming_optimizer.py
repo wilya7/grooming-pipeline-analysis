@@ -500,3 +500,132 @@ def simulate_window_sampling(
     }
     
     return sampled_events, edge_info
+
+
+# ============================================================================= 
+# Unit 6: Calculate Statistical Power
+# =============================================================================
+
+def calculate_statistical_power(
+    group1_metrics: List[float],
+    group2_metrics: List[float],
+    alpha: float,
+    effect_size: float = 0.8
+) -> float:
+    """
+    Estimate statistical power to detect differences between two groups.
+    
+    Calculates the achieved effect size (Cohen's d) between two groups and
+    estimates the statistical power for detecting this difference using a
+    two-sample t-test framework.
+    
+    Args:
+        group1_metrics: List of metrics from group 1
+        group2_metrics: List of metrics from group 2
+        alpha: Significance level (e.g., 0.05)
+        effect_size: Target effect size (default: 0.8) - currently unused
+        
+    Returns:
+        Statistical power as probability (0-1 scale)
+        
+    Method:
+        1. Calculate Cohen's d from observed data
+        2. Use statsmodels.stats.power.ttest_power to estimate power
+        3. Handle edge cases (identical groups, small samples, zero variance)
+        
+    Formula:
+        Cohen's d = |mean1 - mean2| / pooled_std
+        pooled_std = sqrt(((n1-1)*std1^2 + (n2-1)*std2^2) / (n1 + n2 - 2))
+        
+    Edge cases:
+        - Empty groups: Returns 0.0
+        - Identical groups (d=0): Returns alpha (type I error rate)
+        - Very small samples: Returns reduced power
+        - Zero pooled std: Returns alpha if means equal, 1.0 otherwise
+        
+    Example:
+        >>> group1 = [10.0, 10.5, 9.5, 10.2]
+        >>> group2 = [20.0, 20.5, 19.5, 20.2]
+        >>> power = calculate_statistical_power(group1, group2, 0.05)
+        >>> power > 0.8
+        True
+    """
+    import numpy as np
+    from statsmodels.stats.power import ttest_power
+    
+    # Handle edge case: empty groups
+    if len(group1_metrics) == 0 or len(group2_metrics) == 0:
+        return 0.0
+    
+    # Convert to numpy arrays
+    group1 = np.array(group1_metrics)
+    group2 = np.array(group2_metrics)
+    
+    # Calculate sample sizes
+    n1 = len(group1)
+    n2 = len(group2)
+    
+    # Calculate means
+    mean1 = np.mean(group1)
+    mean2 = np.mean(group2)
+    
+    # Calculate sample standard deviations (ddof=1 for sample std)
+    std1 = np.std(group1, ddof=1) if n1 > 1 else 0.0
+    std2 = np.std(group2, ddof=1) if n2 > 1 else 0.0
+    
+    # Calculate pooled standard deviation
+    if n1 + n2 - 2 > 0:
+        pooled_var = ((n1 - 1) * std1**2 + (n2 - 1) * std2**2) / (n1 + n2 - 2)
+        pooled_std = np.sqrt(pooled_var)
+    else:
+        # Not enough degrees of freedom (e.g., single sample in each group)
+        return 0.0
+    
+    # Handle edge case: zero pooled std (no variance in data)
+    if pooled_std == 0 or np.isnan(pooled_std):
+        # All values are identical within and across groups
+        if abs(mean1 - mean2) < 1e-10:  # Means essentially equal
+            return alpha
+        else:
+            # Means differ but no variance - infinite effect size
+            return 1.0
+    
+    # Calculate Cohen's d (achieved effect size from data)
+    cohens_d = abs(mean1 - mean2) / pooled_std
+    
+    # Calculate effective sample size for power calculation
+    # For unequal groups, use harmonic mean
+    nobs = 2 * n1 * n2 / (n1 + n2)
+    
+    # Calculate statistical power using statsmodels
+    try:
+        power = ttest_power(
+            effect_size=cohens_d,
+            nobs=nobs,
+            alpha=alpha,
+            alternative='two-sided'
+        )
+        
+        # Handle NaN results (can occur with very small samples)
+        if np.isnan(power):
+            # For very small samples or numerical instability, use conservative estimate
+            # If effect size is large, assume some power; otherwise near alpha
+            if cohens_d > 2.0:
+                return 0.5  # Moderate power for large effects with small samples
+            elif cohens_d > 0.5:
+                return 0.3  # Low-moderate power
+            else:
+                return alpha
+        
+        # Ensure power is in valid range [0, 1]
+        power = float(np.clip(power, 0.0, 1.0))
+        
+        return power
+    except Exception:
+        # If calculation fails, return conservative estimate based on effect size
+        if cohens_d > 2.0:
+            return 0.5
+        elif cohens_d > 0.5:
+            return 0.3
+        else:
+            return alpha
