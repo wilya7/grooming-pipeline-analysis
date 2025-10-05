@@ -208,3 +208,98 @@ def load_pilot_data(data_dir: str) -> Tuple[Dict[str, List[List[Tuple[int, int]]
         frame_counts[genotype_name] = genotype_frames
     
     return pilot_data, frame_counts
+
+
+# =============================================================================
+# Unit 3: Generate Parameter Space
+# =============================================================================
+
+def generate_parameter_space(frame_counts: Dict[str, List[int]]) -> Dict:
+    """
+    Generate valid parameter combinations based on shortest video.
+    
+    Creates a comprehensive parameter space for optimization by determining
+    valid window sizes from the shortest video's frame count using hierarchical
+    fallback logic, then combining with fixed sampling parameters.
+    
+    Args:
+        frame_counts: Dictionary mapping genotype names to lists of frame counts
+                     Example: {'WT': [9000, 9010], 'KO': [8995]}
+    
+    Returns:
+        Dictionary containing parameter space with keys:
+        - 'window_sizes': List of valid window sizes (based on hierarchical selection)
+        - 'sampling_rates': Fixed list of sampling rates
+        - 'strategies': Fixed list of sampling strategies
+        - 'edge_thresholds': Fixed list of edge thresholds (in frames)
+    
+    Window Size Selection (Hierarchical Fallback):
+        1. Find shortest_frames across all videos
+        2. Find all divisors of shortest_frames
+        3. Apply selection tiers:
+           - Primary: divisors ≥ 100 AND multiples of 25
+           - Fallback: divisors ≥ 100 (if primary yields none)
+        4. Raise ValueError if no valid window sizes found
+    
+    Raises:
+        ValueError: If no valid window sizes can be generated (shortest_frames < 100)
+    
+    Example:
+        >>> frame_counts = {'WT': [9000, 9010], 'KO': [8995]}
+        >>> params = generate_parameter_space(frame_counts)
+        >>> print(params['window_sizes'])
+        [100, 125, 150, 175, 200, 225, ...]
+        >>> print(params['sampling_rates'])
+        [0.05, 0.075, 0.1, 0.125, 0.15, 0.2, 0.25, 0.3]
+    """
+    # Fixed parameters
+    sampling_rates = [0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30]
+    strategies = ['uniform', 'stratified', 'systematic']
+    edge_thresholds = [5, 10, 15, 20, 25, 30]
+    
+    # Extract all frame counts from nested structure
+    all_frame_counts = []
+    for genotype_counts in frame_counts.values():
+        all_frame_counts.extend(genotype_counts)
+    
+    # Find shortest frame count
+    shortest_frames = min(all_frame_counts)
+    
+    # Check if shortest video is too short for valid analysis
+    if shortest_frames < 100:
+        raise ValueError(
+            f"Shortest video has {shortest_frames} frames, which is below the "
+            f"minimum of 100 frames required for parameter space generation."
+        )
+    
+    # Find all divisors of shortest_frames efficiently
+    divisors = []
+    for i in range(1, int(shortest_frames**0.5) + 1):
+        if shortest_frames % i == 0:
+            divisors.append(i)
+            if i != shortest_frames // i:
+                divisors.append(shortest_frames // i)
+    
+    # Sort divisors for consistent ordering
+    divisors.sort()
+    
+    # Filter to divisors >= 100
+    valid_divisors = [d for d in divisors if d >= 100]
+    
+    # Apply hierarchical selection
+    # Primary: divisors ≥ 100 AND multiples of 25
+    primary_candidates = [d for d in valid_divisors if d % 25 == 0]
+    
+    if primary_candidates:
+        window_sizes = primary_candidates
+    else:
+        # Fallback: all divisors ≥ 100
+        window_sizes = valid_divisors
+    
+    # Return parameter space dictionary
+    return {
+        'window_sizes': window_sizes,
+        'sampling_rates': sampling_rates,
+        'strategies': strategies,
+        'edge_thresholds': edge_thresholds
+    }
