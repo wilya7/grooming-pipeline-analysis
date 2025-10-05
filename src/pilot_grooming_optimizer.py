@@ -364,3 +364,139 @@ def generate_bootstrap_samples(
         samples.append(bootstrap_sample)
     
     return samples
+
+
+# =============================================================================
+# Unit 5: Simulate Window Sampling
+# =============================================================================
+
+def simulate_window_sampling(
+    events: List[Tuple[int, int]],
+    total_frames: int,
+    window_size: int,
+    sampling_rate: float,
+    strategy: str,
+    seed: int
+) -> Tuple[List[Tuple[int, int]], Dict]:
+    """
+    Simulate the effect of window sampling on event detection.
+    
+    Divides video into non-overlapping windows, selects a subset based on
+    the specified strategy, and extracts events that overlap with sampled
+    windows. Events are truncated at window boundaries to reflect partial
+    observation within sampled windows.
+    
+    Args:
+        events: List of (start_frame, end_frame) tuples representing grooming events
+        total_frames: Total number of frames in video
+        window_size: Size of sampling window in frames
+        sampling_rate: Proportion of windows to sample (0-1)
+        strategy: Sampling strategy ('uniform', 'stratified', 'systematic')
+        seed: Random seed for reproducibility
+    
+    Returns:
+        Tuple containing:
+        - sampled_events: Events within sampled windows (truncated at boundaries)
+        - edge_info: Dictionary with edge event statistics
+    
+    Edge Info Structure:
+        {
+            'total_events': int,           # Events in sampled windows
+            'edge_events': int,            # Events touching boundaries
+            'edge_percentage': float       # Percentage that are edge events
+        }
+    
+    Event Truncation Examples:
+        - Event (100, 200) in window (150, 250) → becomes (150, 200)
+        - Event (200, 300) in window (150, 250) → becomes (200, 250)
+        - Event (150, 200) in window (150, 250) → unchanged (150, 200)
+    
+    Sampling Strategies:
+        - 'uniform': Random sampling without structure
+        - 'stratified': Ensures even distribution across video
+        - 'systematic': Every nth window (deterministic)
+    
+    Edge Cases:
+        - Empty events list: Returns empty list with zero statistics
+        - No events in sampled windows: Returns empty list with zero statistics
+        - Sampling rate rounds to at least 1 window
+        - Events spanning multiple windows appear once per window (truncated)
+    
+    Example:
+        >>> events = [(100, 200), (300, 400)]
+        >>> sampled, info = simulate_window_sampling(
+        ...     events, 1000, 100, 0.5, 'uniform', 42
+        ... )
+        >>> info['total_events'] >= 0
+        True
+        >>> info['edge_percentage'] >= 0.0
+        True
+    """
+    import numpy as np
+    
+    # Initialize random number generator
+    rng = np.random.RandomState(seed)
+    
+    # Generate non-overlapping windows
+    windows = [(i, min(i + window_size - 1, total_frames - 1)) 
+               for i in range(0, total_frames, window_size)]
+    
+    # Calculate number of windows to sample (at least 1)
+    n_windows = len(windows)
+    n_sample = max(1, int(n_windows * sampling_rate))
+    
+    # Select windows based on strategy
+    if strategy == 'uniform':
+        # Random sampling without replacement
+        sampled_indices = rng.choice(n_windows, size=n_sample, replace=False)
+        sampled_windows = [windows[i] for i in sorted(sampled_indices)]
+    
+    elif strategy == 'stratified':
+        # Divide windows into strata and sample from each
+        # Ensures even distribution across the video
+        stride = n_windows / n_sample
+        sampled_indices = [int(i * stride) for i in range(n_sample)]
+        sampled_windows = [windows[i] for i in sampled_indices]
+    
+    elif strategy == 'systematic':
+        # Every nth window (deterministic)
+        stride = max(1, n_windows // n_sample)
+        sampled_indices = list(range(0, n_windows, stride))[:n_sample]
+        sampled_windows = [windows[i] for i in sampled_indices]
+    
+    else:
+        raise ValueError(f"Unknown sampling strategy: {strategy}. "
+                        f"Must be 'uniform', 'stratified', or 'systematic'.")
+    
+    # Extract and truncate events from sampled windows
+    sampled_events = []
+    edge_events_count = 0
+    
+    for window_start, window_end in sampled_windows:
+        for event_start, event_end in events:
+            # Check if event overlaps with window
+            if event_end >= window_start and event_start <= window_end:
+                # Truncate event at window boundaries
+                truncated_start = max(event_start, window_start)
+                truncated_end = min(event_end, window_end)
+                
+                truncated_event = (truncated_start, truncated_end)
+                sampled_events.append(truncated_event)
+                
+                # Check if event touches window boundaries (edge event)
+                touches_start = event_start < window_start
+                touches_end = event_end > window_end
+                if touches_start or touches_end:
+                    edge_events_count += 1
+    
+    # Calculate edge statistics
+    total_events = len(sampled_events)
+    edge_percentage = (edge_events_count / total_events * 100.0) if total_events > 0 else 0.0
+    
+    edge_info = {
+        'total_events': total_events,
+        'edge_events': edge_events_count,
+        'edge_percentage': edge_percentage
+    }
+    
+    return sampled_events, edge_info
