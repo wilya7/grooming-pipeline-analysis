@@ -5,7 +5,12 @@ import tempfile
 import sys
 from pathlib import Path
 
-from pilot_grooming_optimizer import parse_arguments, load_pilot_data, generate_parameter_space
+from pilot_grooming_optimizer import (
+    parse_arguments, 
+    load_pilot_data, 
+    generate_parameter_space,
+    generate_bootstrap_samples
+)
 
 # =============================================================================
 # Tests for Unit 1: Parse Command Line Arguments
@@ -430,3 +435,79 @@ def test_fallback_triggered():
     assert params['sampling_rates'] == [0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30]
     assert params['strategies'] == ['uniform', 'stratified', 'systematic']
     assert params['edge_thresholds'] == [5, 10, 15, 20, 25, 30]
+
+
+# =============================================================================
+# Tests for Unit 4: Bootstrap Sample Generator
+# =============================================================================
+
+def test_standard_sampling():
+    """Test bootstrap sampling with 10 flies and 100 samples."""
+    # Create data with 10 flies
+    data = [
+        [(i*100, i*100 + 50)] for i in range(10)
+    ]
+    
+    samples = generate_bootstrap_samples(data, n_samples=100, seed=42)
+    
+    # Verify structure
+    assert len(samples) == 100  # 100 bootstrap samples
+    for sample in samples:
+        assert len(sample) == 10  # Each sample has 10 flies (same as original)
+        
+    # Verify each fly in each sample is a valid fly from original data
+    for sample in samples:
+        for fly in sample:
+            assert fly in data
+
+
+def test_single_fly():
+    """Test that single fly data results in identical samples."""
+    # Single fly data
+    data = [[(100, 150), (200, 250)]]
+    
+    samples = generate_bootstrap_samples(data, n_samples=10, seed=42)
+    
+    # Verify structure
+    assert len(samples) == 10
+    
+    # All samples should be identical (only one fly to sample from)
+    for sample in samples:
+        assert len(sample) == 1
+        assert sample[0] == data[0]
+
+
+def test_reproducibility():
+    """Test that same seed produces identical results."""
+    data = [
+        [(10, 20), (30, 40)],
+        [(50, 60)],
+        [(100, 120), (150, 180)]
+    ]
+    
+    # Generate samples with same seed twice
+    samples1 = generate_bootstrap_samples(data, n_samples=5, seed=42)
+    samples2 = generate_bootstrap_samples(data, n_samples=5, seed=42)
+    
+    # Should be identical
+    assert samples1 == samples2
+    
+    # Generate with different seed
+    samples3 = generate_bootstrap_samples(data, n_samples=5, seed=99)
+    
+    # Should be different (with very high probability)
+    assert samples1 != samples3
+
+
+def test_empty_data():
+    """Test that empty data returns empty samples."""
+    data = []
+    
+    samples = generate_bootstrap_samples(data, n_samples=10, seed=42)
+    
+    # Verify structure
+    assert len(samples) == 10
+    
+    # All samples should be empty
+    for sample in samples:
+        assert sample == []
