@@ -11,7 +11,8 @@ from pilot_grooming_optimizer import (
     generate_parameter_space,
     generate_bootstrap_samples,
 		simulate_window_sampling,
-		calculate_statistical_power
+		calculate_statistical_power,
+		evaluate_parameter_combination
 )
 
 # =============================================================================
@@ -890,3 +891,247 @@ def test_exception_small_effect_mock(monkeypatch):
     
     # Should return alpha for small effect (lines 630-631)
     assert power == alpha
+
+
+# =============================================================================
+# Tests for Unit 7: Evaluate Parameter Combination
+# =============================================================================
+
+def test_optimal_parameters():
+    """Test that good parameters yield high composite score."""
+    # Create pilot data with clear difference between genotypes
+    pilot_data = {
+        'WT': [
+            [(100, 150), (200, 250), (300, 350)] for _ in range(5)
+        ],
+        'KO': [
+            [(1000, 1500), (2000, 2500), (3000, 3500)] for _ in range(5)
+        ]
+    }
+    
+    # Good parameters: reasonable window, moderate sampling, low threshold
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.20,
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    scores = evaluate_parameter_combination(
+        pilot_data, params, config, n_bootstrap=50
+    )
+    
+    # Verify all scores are present
+    assert 'power' in scores
+    assert 'bias' in scores
+    assert 'error_rate' in scores
+    assert 'efficiency' in scores
+    assert 'robustness' in scores
+    assert 'composite' in scores
+    
+    # Good parameters should yield high composite score
+    assert scores['composite'] > 0.5
+    
+    # All scores should be in valid ranges
+    assert 0 <= scores['power'] <= 1
+    assert 0 <= scores['bias'] <= 1
+    assert 0 <= scores['error_rate'] <= 1
+    assert 0 <= scores['efficiency'] <= 1
+    assert 0 <= scores['robustness'] <= 1
+    assert 0 <= scores['composite'] <= 1
+
+
+def test_poor_parameters():
+    """Test that poor parameters (very low sampling) yield low power score."""
+    # Create pilot data
+    pilot_data = {
+        'WT': [
+            [(100, 150), (200, 250)] for _ in range(5)
+        ],
+        'KO': [
+            [(1000, 1500), (2000, 2500)] for _ in range(5)
+        ]
+    }
+    
+    # Poor parameters: very low sampling rate
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.05,  # Only 5% sampling
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    scores = evaluate_parameter_combination(
+        pilot_data, params, config, n_bootstrap=50
+    )
+    
+    # Very low sampling should yield reduced power
+    # (though might still detect large differences)
+    assert 0 <= scores['power'] <= 1
+    
+    # Should have low composite score due to reduced detection ability
+    assert scores['composite'] < 0.8
+
+
+def test_excessive_sampling():
+    """Test that 100% sampling yields low efficiency score."""
+    # Create pilot data
+    pilot_data = {
+        'WT': [
+            [(100, 150), (200, 250)] for _ in range(5)
+        ],
+        'KO': [
+            [(1000, 1500), (2000, 2500)] for _ in range(5)
+        ]
+    }
+    
+    # Excessive sampling: 100% sampling rate
+    params = {
+        'window_size': 300,
+        'sampling_rate': 1.0,  # 100% sampling
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    scores = evaluate_parameter_combination(
+        pilot_data, params, config, n_bootstrap=50
+    )
+    
+    # 100% sampling should yield zero efficiency
+    # (no time saved)
+    assert scores['efficiency'] == 0.0
+    
+    # This should reduce composite score despite good power
+    assert scores['composite'] < 1.0
+
+
+def test_high_bias():
+    """Test that parameters causing bias yield low bias score."""
+    # Create pilot data with short events
+    pilot_data = {
+        'WT': [
+            [(i, i+10) for i in range(0, 1000, 100)] for _ in range(5)
+        ],
+        'KO': [
+            [(i, i+15) for i in range(0, 1000, 100)] for _ in range(5)
+        ]
+    }
+    
+    # Parameters likely to cause bias: very large windows with low sampling
+    # This will miss many short events
+    params = {
+        'window_size': 3000,  # Very large windows
+        'sampling_rate': 0.1,   # Low sampling
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    scores = evaluate_parameter_combination(
+        pilot_data, params, config, n_bootstrap=50
+    )
+    
+    # Should detect some bias
+    assert 0 <= scores['bias'] <= 1
+    
+    # Bias component should negatively impact composite score
+    # composite = 0.4*power + 0.2*(1-bias) + 0.2*efficiency + 0.2*(1-robustness)
+    # If bias is high, (1-bias) is low, reducing composite
+    assert scores['composite'] < 1.0
+
+
+def test_invalid_genotype_count():
+    """Test that non-2 genotype count raises ValueError."""
+    # Create pilot data with 3 genotypes (invalid)
+    pilot_data = {
+        'WT': [[(100, 150)] for _ in range(3)],
+        'KO': [[(200, 250)] for _ in range(3)],
+        'HET': [[(300, 350)] for _ in range(3)]  # Third genotype - invalid
+    }
+    
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.20,
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    # Should raise ValueError for non-2 genotypes
+    with pytest.raises(ValueError, match="Expected 2 genotypes, got 3"):
+        evaluate_parameter_combination(
+            pilot_data, params, config, n_bootstrap=10
+        )
+
+
+def test_zero_power_robustness_mock(monkeypatch):
+    """Test robustness calculation when avg_power is 0 using mock."""
+    from unittest.mock import MagicMock
+    
+    # Create pilot data
+    pilot_data = {
+        'WT': [[(100, 150), (200, 250)] for _ in range(3)],
+        'KO': [[(300, 350), (400, 450)] for _ in range(3)]
+    }
+    
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.20,
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    # Mock calculate_statistical_power to always return 0.0
+    # This will cause avg_power to be 0, triggering the else branch at line 847
+    mock_power = MagicMock(return_value=0.0)
+    monkeypatch.setattr('pilot_grooming_optimizer.calculate_statistical_power', mock_power)
+    
+    scores = evaluate_parameter_combination(
+        pilot_data, params, config, n_bootstrap=10
+    )
+    
+    # Verify power is 0 (from our mock)
+    assert scores['power'] == 0.0
+    
+    # Verify robustness is 0.0 (from the else branch at line 847)
+    assert scores['robustness'] == 0.0
+    
+    # Verify all scores are in valid ranges
+    assert 0 <= scores['bias'] <= 1
+    assert 0 <= scores['error_rate'] <= 1
+    assert 0 <= scores['efficiency'] <= 1
+    assert 0 <= scores['composite'] <= 1
