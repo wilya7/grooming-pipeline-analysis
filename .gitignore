@@ -43,3 +43,15 @@ reports/*.html
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Notebooks and exploration
+notebooks/
+
+# Documentation (manually generated, not tracked yet)
+docs/
+
+# Personal checklists
+checklist.md
+
+# Using environment.yml instead
+requirements.txt
