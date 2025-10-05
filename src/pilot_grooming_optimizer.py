@@ -303,3 +303,64 @@ def generate_parameter_space(frame_counts: Dict[str, List[int]]) -> Dict:
         'strategies': strategies,
         'edge_thresholds': edge_thresholds
     }
+
+
+# =============================================================================
+# Unit 4: Bootstrap Sample Generator
+# =============================================================================
+
+def generate_bootstrap_samples(
+    data: List[List[Tuple[int, int]]], 
+    n_samples: int, 
+    seed: int
+) -> List[List[List[Tuple[int, int]]]]:
+    """
+    Generate bootstrap samples by resampling flies with replacement.
+    
+    Bootstrap sampling is a statistical technique for estimating the sampling
+    distribution by repeatedly resampling from the original dataset with 
+    replacement. In this context, we resample entire flies (not individual 
+    events) to maintain the correlation structure within each fly's behavior.
+    
+    Args:
+        data: List of flies, where each fly is a list of (start_frame, end_frame) events
+        n_samples: Number of bootstrap samples to generate
+        seed: Random seed for reproducibility
+        
+    Returns:
+        List of bootstrap samples, where each sample is a list of flies
+        
+    Example:
+        >>> data = [[(10, 20), (30, 40)], [(50, 60)], [(100, 120)]]
+        >>> samples = generate_bootstrap_samples(data, 2, seed=42)
+        >>> len(samples)
+        2
+        >>> len(samples[0])
+        3
+        
+    Notes:
+        - Each bootstrap sample has the same size as the original dataset
+        - Flies can appear multiple times in a single bootstrap sample
+        - Empty data returns empty samples (n_samples empty lists)
+    """
+    import numpy as np
+    
+    # Initialize random number generator with seed
+    rng = np.random.RandomState(seed)
+    
+    # Handle empty data edge case
+    if len(data) == 0:
+        return [[] for _ in range(n_samples)]
+    
+    # Generate n_samples bootstrap samples
+    samples = []
+    for _ in range(n_samples):
+        # Sample indices with replacement
+        indices = rng.choice(range(len(data)), size=len(data), replace=True)
+        
+        # Create bootstrap sample by selecting flies at sampled indices
+        bootstrap_sample = [data[i] for i in indices]
+        
+        samples.append(bootstrap_sample)
+    
+    return samples
