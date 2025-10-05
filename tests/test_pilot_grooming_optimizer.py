@@ -5,8 +5,7 @@ import tempfile
 import sys
 from pathlib import Path
 
-from pilot_grooming_optimizer import parse_arguments, load_pilot_data
-
+from pilot_grooming_optimizer import parse_arguments, load_pilot_data, generate_parameter_space
 
 # =============================================================================
 # Tests for Unit 1: Parse Command Line Arguments
@@ -310,3 +309,124 @@ def test_mixed_frame_counts(tmp_path):
     # Verify data structure is correct
     assert len(pilot_data["genotype_A"]) == 3
     assert len(pilot_data["genotype_B"]) == 1
+
+
+# =============================================================================
+# Tests for Unit 3: Generate Parameter Space
+# =============================================================================
+
+def test_standard_9000_frames():
+    """Test parameter generation with standard 9000-frame videos."""
+    frame_counts = {
+        'WT': [9000, 9000, 9000],
+        'KO': [9000, 9000]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    
+    # Verify structure
+    assert 'window_sizes' in params
+    assert 'sampling_rates' in params
+    assert 'strategies' in params
+    assert 'edge_thresholds' in params
+    
+    # Verify fixed parameters
+    assert params['sampling_rates'] == [0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30]
+    assert params['strategies'] == ['uniform', 'stratified', 'systematic']
+    assert params['edge_thresholds'] == [5, 10, 15, 20, 25, 30]
+    
+    # Verify window sizes (9000 has many divisors that are multiples of 25 and ≥ 100)
+    # Expected: 100, 125, 150, 180, 200, 225, 300, 360, 450, 600, 900, 1125, 1800, 2250, 4500, 9000
+    # All should be divisors of 9000, ≥ 100, and multiples of 25
+    assert len(params['window_sizes']) > 5  # Should have multiple valid sizes
+    for size in params['window_sizes']:
+        assert size >= 100
+        assert size % 25 == 0
+        assert 9000 % size == 0  # Should be divisor
+
+
+def test_short_video_500_frames():
+    """Test parameter generation with short 500-frame video."""
+    frame_counts = {
+        'WT': [500, 550, 600],
+        'KO': [500, 525]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    
+    # Verify structure
+    assert 'window_sizes' in params
+    assert len(params['window_sizes']) > 0
+    
+    # Verify window sizes are valid for 500 frames
+    # Divisors of 500: 1, 2, 4, 5, 10, 20, 25, 50, 100, 125, 250, 500
+    # Primary (≥100 AND multiple of 25): 100, 125, 250, 500
+    for size in params['window_sizes']:
+        assert size >= 100
+        assert size <= 500
+        assert size % 25 == 0
+        assert 500 % size == 0
+
+
+def test_very_short_video():
+    """Test that very short videos raise ValueError."""
+    frame_counts = {
+        'WT': [50, 60, 75],
+        'KO': [50, 55]
+    }
+    
+    # Should raise ValueError because shortest video < 100 frames
+    with pytest.raises(ValueError, match="Shortest video has .* frames, which is below the minimum"):
+        generate_parameter_space(frame_counts)
+
+				
+def test_mixed_frame_counts():
+    """Test that shortest video determines window sizes."""
+    frame_counts = {
+        'WT': [9100, 9000, 9050],
+        'KO': [8900, 9100]  # 8900 is shortest
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    
+    # Verify window sizes are based on 8900 (shortest)
+    # All window sizes must be divisors of 8900
+    for size in params['window_sizes']:
+        assert size >= 100
+        assert 8900 % size == 0  # Must divide evenly into shortest video
+        
+    # Verify that a divisor of 9000 that doesn't divide 8900 is NOT included
+    # Example: 450 divides 9000 but not 8900
+    # 8900 = 2^2 × 5^2 × 89, so 450 (2 × 3^2 × 5^2) doesn't divide it
+    assert 450 not in params['window_sizes']
+
+
+def test_fallback_triggered():
+    """Test that fallback triggers when no divisors are multiples of 25."""
+    # Use 101 frames (prime number)
+    # Divisors: 1, 101
+    # valid_divisors: [101] (meets >= 100 threshold)
+    # primary_candidates: [] (101 % 25 = 1, not a multiple of 25)
+    # Should use fallback: all valid_divisors
+    frame_counts = {
+        'WT': [101, 101],
+        'KO': [101]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    
+    # Verify structure
+    assert 'window_sizes' in params
+    assert 'sampling_rates' in params
+    assert 'strategies' in params
+    assert 'edge_thresholds' in params
+    
+    # Verify fallback was used: got [101] even though it's not a multiple of 25
+    assert params['window_sizes'] == [101]
+    assert 101 >= 100  # Meets minimum threshold
+    assert 101 % 25 != 0  # Not a multiple of 25 (proves fallback was used)
+    
+    # Verify fixed parameters unchanged
+    assert params['sampling_rates'] == [0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30]
+    assert params['strategies'] == ['uniform', 'stratified', 'systematic']
+    assert params['edge_thresholds'] == [5, 10, 15, 20, 25, 30]
