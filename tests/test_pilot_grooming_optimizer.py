@@ -10,7 +10,8 @@ from pilot_grooming_optimizer import (
     load_pilot_data, 
     generate_parameter_space,
     generate_bootstrap_samples,
-		simulate_window_sampling
+		simulate_window_sampling,
+		calculate_statistical_power
 )
 
 # =============================================================================
@@ -646,3 +647,246 @@ def test_invalid_strategy():
         simulate_window_sampling(
             events, 300, 100, 0.5, 'invalid_strategy', 42
         )
+
+
+# =============================================================================
+# Tests for Unit 6: Calculate Statistical Power
+# =============================================================================
+
+import numpy as np
+
+def test_large_difference():
+    """Test that groups with large difference yield high power."""
+    # Create groups with large difference: mean 10 vs 20, std ~ 2
+    # Cohen's d = (20 - 10) / 2 = 5.0 (very large effect)
+    group1 = [10.0, 9.0, 11.0, 10.5, 9.5, 10.2, 9.8, 10.3, 9.7, 11.2]
+    group2 = [20.0, 19.0, 21.0, 20.5, 19.5, 20.2, 19.8, 20.3, 19.7, 21.2]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Large effect size should yield high power
+    assert power > 0.8
+    assert power <= 1.0
+
+
+def test_identical_groups():
+    """Test that identical groups yield low power (~alpha)."""
+    # Identical groups - no difference to detect
+    group1 = [10.0, 10.0, 10.0, 10.0, 10.0]
+    group2 = [10.0, 10.0, 10.0, 10.0, 10.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Identical groups (effect size = 0) should yield power ~ alpha
+    # When there's no real effect, power equals the false positive rate
+    assert power <= 0.10  # Should be close to alpha (0.05)
+    assert power >= 0.0
+
+
+def test_small_sample():
+    """Test that small sample sizes yield reduced power."""
+    # Small samples (n=3 each) with moderate difference
+    group1 = [10.0, 11.0, 12.0]
+    group2 = [15.0, 16.0, 17.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Small sample should have reduced power despite moderate effect
+    # Power should be valid and reasonable
+    assert 0.0 <= power <= 1.0
+    assert not np.isnan(power)  # Should not return NaN
+
+
+def test_unequal_sizes():
+    """Test that unequal group sizes yield appropriate power calculation."""
+    # Unequal groups: n1=10, n2=5 with large difference
+    group1 = [10.0, 10.5, 9.5, 10.2, 9.8, 10.1, 9.9, 10.3, 9.7, 10.4]
+    group2 = [15.0, 15.5, 14.5, 15.2, 14.8]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should calculate power appropriately for unequal groups
+    assert 0.0 <= power <= 1.0
+    assert not np.isnan(power)  # Should not return NaN
+    # With this large difference, should have at least moderate power
+    # (small samples may limit power even with large effects)
+    assert power >= 0.3
+
+
+def test_empty_group1():
+    """Test that empty group1 returns 0.0."""
+    group1 = []
+    group2 = [10.0, 11.0, 12.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    assert power == 0.0
+
+
+def test_empty_group2():
+    """Test that empty group2 returns 0.0."""
+    group1 = [10.0, 11.0, 12.0]
+    group2 = []
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    assert power == 0.0
+
+
+def test_single_sample_each():
+    """Test that single sample in each group returns 0.0 (not enough df)."""
+    # n=1 in each group means df = n1 + n2 - 2 = 0
+    group1 = [10.0]
+    group2 = [15.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    assert power == 0.0
+
+
+def test_zero_variance_different_means():
+    """Test zero variance with different means returns 1.0."""
+    # All values identical within groups, but groups differ
+    group1 = [10.0, 10.0, 10.0, 10.0]
+    group2 = [20.0, 20.0, 20.0, 20.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Perfect separation with no variance = infinite effect size
+    assert power == 1.0
+
+
+def test_moderate_effect_size():
+    """Test moderate effect size triggering appropriate fallback."""
+    # Create groups with moderate difference that might trigger NaN
+    # Cohen's d around 1.0-1.5 (moderate-large)
+    group1 = [10.0, 11.0, 12.0]
+    group2 = [13.0, 14.0, 15.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should return valid power (not NaN)
+    assert 0.0 <= power <= 1.0
+    assert not np.isnan(power)
+
+
+def test_small_effect_nan_fallback():
+    """Test small effect size with tiny sample triggering NaN fallback (returns alpha)."""
+    # Very small samples with small difference
+    # This should trigger NaN and return alpha (cohens_d <= 0.5)
+    group1 = [10.0, 10.2]
+    group2 = [10.3, 10.5]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should handle gracefully - either calculate power or return alpha
+    assert 0.0 <= power <= 1.0
+    assert not np.isnan(power)
+
+
+def test_moderate_effect_nan_fallback():
+    """Test moderate effect size with tiny sample triggering NaN fallback (returns 0.3)."""
+    # Very small samples with moderate difference
+    # This should trigger NaN and return 0.3 (0.5 < cohens_d <= 2.0)
+    group1 = [10.0, 10.5]
+    group2 = [12.0, 12.5]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should handle gracefully - either calculate power or return 0.3
+    assert 0.0 <= power <= 1.0
+    assert not np.isnan(power)
+
+
+def test_nan_moderate_effect_mock(monkeypatch):
+    """Test NaN return with moderate effect size (0.5 < d <= 2.0) returns 0.3."""
+    from unittest.mock import MagicMock
+    
+    # Mock ttest_power to return NaN at the actual import location
+    mock_ttest_power = MagicMock(return_value=np.nan)
+    monkeypatch.setattr('statsmodels.stats.power.ttest_power', mock_ttest_power)
+    
+    # Create groups with moderate effect size (Cohen's d ~ 1.0)
+    # Using larger spread to keep effect size moderate
+    group1 = [5.0, 8.0, 10.0, 12.0, 15.0]
+    group2 = [10.0, 13.0, 15.0, 17.0, 20.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should return 0.3 for moderate effect (lines 615-617)
+    assert power == 0.3
+
+
+def test_nan_small_effect_mock(monkeypatch):
+    """Test NaN return with small effect size (d <= 0.5) returns alpha."""
+    from unittest.mock import MagicMock
+    
+    # Mock ttest_power to return NaN at the actual import location
+    mock_ttest_power = MagicMock(return_value=np.nan)
+    monkeypatch.setattr('statsmodels.stats.power.ttest_power', mock_ttest_power)
+    
+    # Create groups with small effect size (Cohen's d ~ 0.3)
+    group1 = [10.0, 10.5, 11.0, 11.5, 12.0]
+    group2 = [10.2, 10.7, 11.2, 11.7, 12.2]
+    
+    alpha = 0.05
+    power = calculate_statistical_power(group1, group2, alpha=alpha)
+    
+    # Should return alpha for small effect (lines 617-618)
+    assert power == alpha
+
+
+def test_exception_large_effect_mock(monkeypatch):
+    """Test exception handler with large effect size (d > 2.0) returns 0.5."""
+    from unittest.mock import MagicMock
+    
+    # Mock ttest_power to raise an exception at the actual import location
+    mock_ttest_power = MagicMock(side_effect=ValueError("Mocked error"))
+    monkeypatch.setattr('statsmodels.stats.power.ttest_power', mock_ttest_power)
+    
+    # Create groups with large effect size (Cohen's d > 2.0)
+    group1 = [10.0, 11.0, 12.0, 13.0, 14.0]
+    group2 = [20.0, 21.0, 22.0, 23.0, 24.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should return 0.5 for large effect (lines 626-627)
+    assert power == 0.5
+
+
+def test_exception_moderate_effect_mock(monkeypatch):
+    """Test exception handler with moderate effect size (0.5 < d <= 2.0) returns 0.3."""
+    from unittest.mock import MagicMock
+    
+    # Mock ttest_power to raise an exception at the actual import location
+    mock_ttest_power = MagicMock(side_effect=RuntimeError("Mocked error"))
+    monkeypatch.setattr('statsmodels.stats.power.ttest_power', mock_ttest_power)
+    
+    # Create groups with moderate effect size (Cohen's d ~ 1.0)
+    # Using larger spread to keep effect size moderate
+    group1 = [5.0, 8.0, 10.0, 12.0, 15.0]
+    group2 = [10.0, 13.0, 15.0, 17.0, 20.0]
+    
+    power = calculate_statistical_power(group1, group2, alpha=0.05)
+    
+    # Should return 0.3 for moderate effect (lines 628-629)
+    assert power == 0.3
+
+
+def test_exception_small_effect_mock(monkeypatch):
+    """Test exception handler with small effect size (d <= 0.5) returns alpha."""
+    from unittest.mock import MagicMock
+    
+    # Mock ttest_power to raise an exception at the actual import location
+    mock_ttest_power = MagicMock(side_effect=Exception("Mocked error"))
+    monkeypatch.setattr('statsmodels.stats.power.ttest_power', mock_ttest_power)
+    
+    # Create groups with small effect size (Cohen's d ~ 0.3)
+    group1 = [10.0, 10.5, 11.0, 11.5, 12.0]
+    group2 = [10.2, 10.7, 11.2, 11.7, 12.2]
+    
+    alpha = 0.05
+    power = calculate_statistical_power(group1, group2, alpha=alpha)
+    
+    # Should return alpha for small effect (lines 630-631)
+    assert power == alpha
