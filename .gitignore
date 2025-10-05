@@ -55,3 +55,6 @@ checklist.md
 
 # Using environment.yml instead
 requirements.txt
+
+# PPE Framework
+.ppe/
