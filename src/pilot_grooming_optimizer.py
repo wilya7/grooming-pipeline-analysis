@@ -5,8 +5,7 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Tuple
 
-from common_library import load_event_csv, process_directory_structure
-
+from common_library import load_event_csv, process_directory_structure, calculate_all_behavioral_metrics
 
 # =============================================================================
 # Unit 1: Parse Command Line Arguments
@@ -629,3 +628,237 @@ def calculate_statistical_power(
             return 0.3
         else:
             return alpha
+
+
+# =============================================================================
+# Unit 7: Evaluate Parameter Combination
+# =============================================================================
+
+def evaluate_parameter_combination(
+    pilot_data: Dict[str, List[List[Tuple[int, int]]]],
+    params: Dict,
+    config: Dict,
+    n_bootstrap: int = 10000
+) -> Dict[str, float]:
+    """
+    Comprehensively evaluate one parameter combination.
+    
+    Evaluates a parameter combination by simulating window sampling across
+    bootstrap iterations and calculating multiple performance scores including
+    statistical power, bias, error rate, efficiency, and robustness.
+    
+    Args:
+        pilot_data: Complete pilot dataset by genotype
+                   Structure: {genotype_name: [fly1_events, fly2_events, ...]}
+        params: Single parameter combination with keys:
+               - window_size: Size of sampling window in frames
+               - sampling_rate: Proportion of windows to sample (0-1)
+               - strategy: Sampling strategy ('uniform', 'stratified', 'systematic')
+               - edge_threshold: Maximum acceptable edge event percentage
+        config: Configuration with keys:
+               - alpha: Significance level for statistical tests
+               - power: Target statistical power (for reference)
+               - expected_frames: Expected frame count per video
+        n_bootstrap: Bootstrap iterations (default: 10000)
+    
+    Returns:
+        Dictionary containing evaluation scores:
+        - 'power': Average statistical power (0-1)
+        - 'bias': Bias vs ground truth (0-1, lower is better)
+        - 'error_rate': False positive/negative rate (0-1, lower is better)
+        - 'efficiency': Time saved based on sampling_rate (0-1, higher is better)
+        - 'robustness': CV of power across iterations (0-1+, lower is better)
+        - 'composite': Weighted composite score (0-1, higher is better)
+    
+    Composite Score Formula:
+        composite = 0.4 * power + 0.2 * (1 - bias) + 0.2 * efficiency + 0.2 * (1 - robustness)
+    
+    Example:
+        >>> pilot_data = {
+        ...     'WT': [[(100, 150), (200, 250)], [(300, 400)]],
+        ...     'KO': [[(500, 600)], [(700, 800)]]
+        ... }
+        >>> params = {
+        ...     'window_size': 100,
+        ...     'sampling_rate': 0.3,
+        ...     'strategy': 'uniform',
+        ...     'edge_threshold': 20
+        ... }
+        >>> config = {'alpha': 0.05, 'power': 0.8, 'expected_frames': 9000}
+        >>> scores = evaluate_parameter_combination(pilot_data, params, config, n_bootstrap=100)
+        >>> 0 <= scores['composite'] <= 1
+        True
+    """
+    from tqdm import tqdm
+    import numpy as np
+    
+    # Extract parameters
+    window_size = params['window_size']
+    sampling_rate = params['sampling_rate']
+    strategy = params['strategy']
+    edge_threshold = params['edge_threshold']
+    
+    # Extract config
+    alpha = config['alpha']
+    expected_frames = config['expected_frames']
+    
+    # Get genotype names (should be exactly 2)
+    genotype_names = list(pilot_data.keys())
+    if len(genotype_names) != 2:
+        raise ValueError(f"Expected 2 genotypes, got {len(genotype_names)}")
+    
+    genotype1, genotype2 = genotype_names[0], genotype_names[1]
+    
+    # Calculate ground truth metrics for each genotype (aggregate all flies)
+    ground_truth = {}
+    for genotype_name in genotype_names:
+        all_events = []
+        for fly_events in pilot_data[genotype_name]:
+            all_events.extend(fly_events)
+        
+        gt_metrics = calculate_all_behavioral_metrics(
+            all_events, 
+            expected_frames
+        )
+        ground_truth[genotype_name] = gt_metrics
+    
+    # Generate bootstrap samples for each genotype
+    bootstrap_samples = {}
+    for genotype_name in genotype_names:
+        bootstrap_samples[genotype_name] = generate_bootstrap_samples(
+            pilot_data[genotype_name],
+            n_samples=n_bootstrap,
+            seed=42
+        )
+    
+    # Initialize tracking arrays
+    power_scores = []
+    bias_scores = []
+    edge_percentages = []
+    
+    # Iterate through bootstrap samples with progress bar
+    for i in tqdm(range(n_bootstrap), desc="Evaluating parameters"):
+        # For this bootstrap iteration, collect fly-level metrics for each genotype
+        fly_metrics = {genotype1: [], genotype2: []}
+        iteration_edge_events = []
+        iteration_total_events = []
+        
+        for genotype_name in genotype_names:
+            # Get bootstrap sample for this iteration
+            bootstrap_sample = bootstrap_samples[genotype_name][i]
+            
+            # Apply window sampling to each fly in the bootstrap sample
+            for fly_events in bootstrap_sample:
+                # Apply window sampling to this fly
+                sampled_events, edge_info = simulate_window_sampling(
+                    fly_events,
+                    expected_frames,
+                    window_size,
+                    sampling_rate,
+                    strategy,
+                    seed=42 + i  # Different seed for each iteration
+                )
+                
+                # Calculate metrics for this individual fly
+                fly_metric = calculate_all_behavioral_metrics(
+                    sampled_events,
+                    expected_frames
+                )
+                
+                # Store fly-level frequency metric
+                fly_metrics[genotype_name].append(fly_metric['event_frequency'])
+                
+                # Track edge events
+                iteration_edge_events.append(edge_info['edge_events'])
+                iteration_total_events.append(edge_info['total_events'])
+        
+        # Calculate power for this iteration using fly-level metrics
+        iteration_power = calculate_statistical_power(
+            fly_metrics[genotype1],
+            fly_metrics[genotype2],
+            alpha
+        )
+        power_scores.append(iteration_power)
+        
+        # Calculate bias for this iteration (aggregate metrics vs ground truth)
+        agg_metrics = {}
+        for genotype_name in genotype_names:
+            # Aggregate events from all flies in this bootstrap sample
+            all_sampled_events = []
+            for fly_events in bootstrap_samples[genotype_name][i]:
+                sampled_events, _ = simulate_window_sampling(
+                    fly_events,
+                    expected_frames,
+                    window_size,
+                    sampling_rate,
+                    strategy,
+                    seed=42 + i
+                )
+                all_sampled_events.extend(sampled_events)
+            
+            agg_metrics[genotype_name] = calculate_all_behavioral_metrics(
+                all_sampled_events,
+                expected_frames
+            )
+        
+        # Calculate bias for each genotype
+        bias1 = abs(agg_metrics[genotype1]['event_frequency'] - 
+                    ground_truth[genotype1]['event_frequency'])
+        bias2 = abs(agg_metrics[genotype2]['event_frequency'] - 
+                    ground_truth[genotype2]['event_frequency'])
+        avg_bias = (bias1 + bias2) / 2
+        bias_scores.append(avg_bias)
+        
+        # Calculate edge percentage for this iteration
+        total_edge = sum(iteration_edge_events)
+        total_evts = sum(iteration_total_events)
+        if total_evts > 0:
+            edge_pct = (total_edge / total_evts) * 100
+        else:
+            edge_pct = 0.0
+        edge_percentages.append(edge_pct)
+    
+    # Calculate final scores
+    
+    # Power: average across iterations
+    avg_power = float(np.mean(power_scores))
+    
+    # Bias: average bias normalized to 0-1 scale
+    avg_bias = float(np.mean(bias_scores))
+    max_bias = 10.0  # Assume max reasonable bias is 10 events/min
+    normalized_bias = min(avg_bias / max_bias, 1.0)
+    
+    # Error rate: based on edge events exceeding threshold
+    avg_edge_percentage = float(np.mean(edge_percentages))
+    if avg_edge_percentage > edge_threshold:
+        error_rate = (avg_edge_percentage - edge_threshold) / 100.0
+    else:
+        error_rate = 0.0
+    error_rate = min(error_rate, 1.0)  # Cap at 1.0
+    
+    # Efficiency: inverse of sampling rate (more sampling = less efficient)
+    efficiency = 1.0 - sampling_rate
+    
+    # Robustness: CV of power across iterations
+    if avg_power > 0:
+        std_power = float(np.std(power_scores))
+        robustness_cv = std_power / avg_power
+    else:
+        robustness_cv = 0.0
+    # Normalize to 0-1 scale (assume max CV is 1.0)
+    normalized_robustness = min(robustness_cv / 1.0, 1.0)
+    
+    # Calculate composite score
+    composite = (0.4 * avg_power + 
+                 0.2 * (1 - normalized_bias) + 
+                 0.2 * efficiency + 
+                 0.2 * (1 - normalized_robustness))
+    
+    return {
+        'power': avg_power,
+        'bias': normalized_bias,
+        'error_rate': error_rate,
+        'efficiency': efficiency,
+        'robustness': normalized_robustness,
+        'composite': composite
+    }
