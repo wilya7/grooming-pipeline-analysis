@@ -3,8 +3,14 @@
 import argparse
 import sys
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Tuple
 
+from common_library import load_event_csv, process_directory_structure
+
+
+# =============================================================================
+# Unit 1: Parse Command Line Arguments
+# =============================================================================
 
 def parse_arguments(args: List[str] = None) -> Dict:
     """
@@ -104,3 +110,101 @@ def parse_arguments(args: List[str] = None) -> Dict:
     }
     
     return config
+
+
+# =============================================================================
+# Unit 2: Load Pilot Data from Multiple Genotypes
+# =============================================================================
+
+def load_pilot_data(data_dir: str) -> Tuple[Dict[str, List[List[Tuple[int, int]]]], Dict[str, List[int]]]:
+    """
+    Load all pilot CSV files organized by genotype.
+    
+    Processes a directory structure containing genotype subdirectories, each
+    with multiple CSV files representing individual flies. Loads grooming
+    events and extracts frame counts for each fly.
+    
+    Directory structure expected:
+        data_dir/
+          ├── genotype_A/
+          │   ├── fly1.csv
+          │   ├── fly2.csv
+          │   └── ...
+          ├── genotype_B/
+          │   └── ...
+    
+    Args:
+        data_dir: Directory containing genotype subdirectories
+    
+    Returns:
+        Tuple containing:
+        - pilot_data: Nested structure mapping genotype → flies → events
+          Example: {'WT': [[(100, 150)], [(200, 250)]]}
+        - frame_counts: Actual frame counts per genotype and fly
+          Example: {'WT': [9000, 9010], 'KO': [9005, 9000]}
+    
+    Raises:
+        ValueError: If fewer than 2 genotypes found
+        FileNotFoundError: If data_dir does not exist
+    
+    Notes:
+        - Empty CSV files are allowed (represent flies with no grooming events)
+        - Frame count for empty CSVs is recorded as 0 (unknown/no data)
+        - Warnings from directory processing are printed to stdout
+        - Files are processed in sorted alphabetical order for consistency
+    
+    Example:
+        >>> pilot_data, frame_counts = load_pilot_data('data/pilot/')
+        >>> print(len(pilot_data))
+        2
+        >>> print(pilot_data['WT'][0])
+        [(100, 150), (200, 250)]
+    """
+    # Get directory structure using common_library function
+    structure, warnings = process_directory_structure(data_dir, file_extension='.csv')
+    
+    # Print warnings if any
+    for warning in warnings:
+        print(f"Warning: {warning}")
+    
+    # Validation: require at least 2 genotypes for comparison
+    if len(structure) < 2:
+        raise ValueError(
+            f"At least 2 genotypes required for analysis, found {len(structure)}. "
+            f"Ensure data_dir contains at least 2 genotype subdirectories with CSV files."
+        )
+    
+    # Initialize output dictionaries
+    pilot_data: Dict[str, List[List[Tuple[int, int]]]] = {}
+    frame_counts: Dict[str, List[int]] = {}
+    
+    # Process each genotype
+    for genotype_name, file_paths in structure.items():
+        genotype_events = []
+        genotype_frames = []
+        
+        # Sort file paths for consistent ordering across filesystems
+        sorted_file_paths = sorted(file_paths)
+        
+        # Process each CSV file for this genotype
+        for csv_path in sorted_file_paths:
+            # Load events from CSV using common_library function
+            events = load_event_csv(csv_path, validate=True)
+            
+            # Extract frame count from events
+            if len(events) > 0:
+                # Get maximum end frame from all events
+                frame_count = max([end for start, end in events])
+            else:
+                # Empty CSV: no events, frame count unknown (use 0 as sentinel)
+                frame_count = 0
+            
+            # Store events and frame count for this fly
+            genotype_events.append(events)
+            genotype_frames.append(frame_count)
+        
+        # Store results for this genotype
+        pilot_data[genotype_name] = genotype_events
+        frame_counts[genotype_name] = genotype_frames
+    
+    return pilot_data, frame_counts
