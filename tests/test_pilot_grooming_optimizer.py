@@ -9,7 +9,8 @@ from pilot_grooming_optimizer import (
     parse_arguments, 
     load_pilot_data, 
     generate_parameter_space,
-    generate_bootstrap_samples
+    generate_bootstrap_samples,
+		simulate_window_sampling
 )
 
 # =============================================================================
@@ -511,3 +512,137 @@ def test_empty_data():
     # All samples should be empty
     for sample in samples:
         assert sample == []
+
+
+# =============================================================================
+# Tests for Unit 5: Simulate Window Sampling
+# =============================================================================
+
+def test_events_fully_within():
+    """Test that events fully within windows are preserved exactly."""
+    # Window size 100: windows are [0, 99], [100, 199], [200, 299]
+    events = [
+        (10, 20),    # Fully in window [0, 99]
+        (110, 120),  # Fully in window [100, 199]
+        (210, 220)   # Fully in window [200, 299]
+    ]
+    
+    # Sample all windows (rate=1.0) to ensure all events are captured
+    sampled_events, edge_info = simulate_window_sampling(
+        events, 300, 100, 1.0, 'uniform', 42
+    )
+    
+    # Events should be preserved exactly (no truncation needed)
+    assert (10, 20) in sampled_events
+    assert (110, 120) in sampled_events
+    assert (210, 220) in sampled_events
+    
+    # No edge events (all events fully within their windows)
+    assert edge_info['edge_events'] == 0
+    assert edge_info['edge_percentage'] == 0.0
+    assert edge_info['total_events'] == 3
+
+
+def test_events_crossing_boundaries():
+    """Test that events crossing window boundaries are truncated correctly."""
+    # Window size 100: windows are [0, 99], [100, 199], [200, 299]
+    events = [
+        (50, 150),   # Crosses boundary between [0, 99] and [100, 199]
+        (180, 250)   # Crosses boundary between [100, 199] and [200, 299]
+    ]
+    
+    # Sample all windows to capture all events
+    sampled_events, edge_info = simulate_window_sampling(
+        events, 300, 100, 1.0, 'uniform', 42
+    )
+    
+    # First event should be split and truncated into two parts
+    # (50, 150) in window [0, 99] → (50, 99)
+    # (50, 150) in window [100, 199] → (100, 150)
+    assert (50, 99) in sampled_events
+    assert (100, 150) in sampled_events
+    
+    # Second event should be split and truncated into two parts
+    # (180, 250) in window [100, 199] → (180, 199)
+    # (180, 250) in window [200, 299] → (200, 250)
+    assert (180, 199) in sampled_events
+    assert (200, 250) in sampled_events
+    
+    # All events are edge events (all cross boundaries)
+    assert edge_info['edge_events'] == 4
+    assert edge_info['total_events'] == 4
+    assert edge_info['edge_percentage'] == 100.0
+
+
+def test_events_spanning_multiple():
+    """Test that event spanning multiple windows is handled correctly."""
+    # Window size 100: windows are [0, 99], [100, 199], [200, 299], [300, 399]
+    events = [
+        (50, 350)  # Spans 4 windows
+    ]
+    
+    # Sample all windows
+    sampled_events, edge_info = simulate_window_sampling(
+        events, 400, 100, 1.0, 'uniform', 42
+    )
+    
+    # Event should appear in each window it spans, truncated at each boundary
+    assert (50, 99) in sampled_events     # Window [0, 99]
+    assert (100, 199) in sampled_events   # Window [100, 199]
+    assert (200, 299) in sampled_events   # Window [200, 299]
+    assert (300, 350) in sampled_events   # Window [300, 399]
+    
+    # All are edge events (all touch at least one boundary)
+    assert edge_info['total_events'] == 4
+    assert edge_info['edge_events'] == 4
+    assert edge_info['edge_percentage'] == 100.0
+
+
+def test_no_events_in_windows():
+    """Test that no events in sampled windows returns empty list."""
+    # Use systematic sampling for deterministic behavior
+    # Windows: [0, 99], [100, 199], [200, 299], [300, 399], [400, 499]
+    # With systematic rate 0.2 (1 out of 5 windows), stride = 5
+    # Sampled window index: 0 → window [0, 99]
+    
+    # Place events in windows that won't be sampled
+    events = [
+        (110, 120),  # Window [100, 199] - not sampled
+        (210, 220),  # Window [200, 299] - not sampled
+        (310, 320)   # Window [300, 399] - not sampled
+    ]
+    
+    # Systematic sampling: 5 windows, rate 0.2 → 1 window → index 0 → [0, 99]
+    sampled_events, edge_info = simulate_window_sampling(
+        events, 500, 100, 0.2, 'systematic', 42
+    )
+    
+    # No events in the sampled window [0, 99]
+    assert sampled_events == []
+    assert edge_info['total_events'] == 0
+    assert edge_info['edge_events'] == 0
+    assert edge_info['edge_percentage'] == 0.0
+
+
+def test_stratified_strategy():
+    """Test stratified sampling strategy."""
+    events = [(10, 20), (110, 120), (210, 220)]
+    
+    # Use stratified strategy
+    sampled_events, edge_info = simulate_window_sampling(
+        events, 300, 100, 0.67, 'stratified', 42
+    )
+    
+    # Should sample some windows and capture events
+    assert len(sampled_events) > 0
+    assert edge_info['total_events'] == len(sampled_events)
+
+
+def test_invalid_strategy():
+    """Test that invalid strategy raises ValueError."""
+    events = [(10, 20)]
+    
+    with pytest.raises(ValueError, match="Unknown sampling strategy"):
+        simulate_window_sampling(
+            events, 300, 100, 0.5, 'invalid_strategy', 42
+        )
