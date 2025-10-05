@@ -1,0 +1,17 @@
+[project]
+name = "grooming-pipeline-analysis-3e3f790d"
+description = "full pipeline to manually score grooming events"
+version = "0.1.0"
+authors = [{name = "Carlo Fusco", email = "carlo.fusco@pm.me"}]
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=src --cov-report=html --cov-report=term"
+
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+select = ["E", "F", "I", "N", "W"]

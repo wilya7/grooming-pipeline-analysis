@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.env
+.venv
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Data files
+data/pilot_data/*/*.csv
+data/videos/*/*.tif
+data/sampled/*
+!data/**/.gitkeep
+
+# Output files
+*.json
+*.pdf
+*.html
+sampled_video.tif
+scored_sampled.csv
+sampling_metadata.csv
+
+# Results
+results/
+reports/*.pdf
+reports/*.html
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Jupyter
+.ipynb_checkpoints/
