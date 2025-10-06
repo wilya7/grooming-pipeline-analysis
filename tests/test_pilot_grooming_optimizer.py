@@ -16,7 +16,8 @@ from pilot_grooming_optimizer import (
 		cross_validate_parameters,
 		optimize_parameter_space,
 		generate_visualization_plots,
-		generate_detailed_log
+		generate_detailed_log,
+		generate_pdf_report
 )
 
 # =============================================================================
@@ -2572,3 +2573,881 @@ def test_empty_frame_counts():
     assert log['pilot_summary']['frame_counts']['max'] == 0
     assert log['pilot_summary']['frame_counts']['mean'] == 0.0
     assert log['pilot_summary']['frame_counts']['variation'] == 0.0  # Covers len == 0 branch
+
+
+# =============================================================================
+# Tests for Unit 12: Generate PDF Report
+# =============================================================================
+
+def test_standard_report(tmp_path):
+    """Test standard report generation with all sections."""
+    # Create comprehensive log data
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 8990,
+                'max': 9010,
+                'mean': 9000.0,
+                'variation': 0.22
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 100,
+            'parameter_space': {
+                'window_sizes': [100, 200, 300],
+                'sampling_rates': [0.1, 0.2, 0.3],
+                'strategies': ['uniform', 'stratified'],
+                'edge_thresholds': [10, 20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 100,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.45,
+            'mean_composite_score': 0.60,
+            'std_composite_score': 0.08
+        }
+    }
+    
+    # Create dummy plot files
+    plots_dir = tmp_path / "plots"
+    plots_dir.mkdir()
+    
+    plot_paths = []
+    for plot_name in ['heatmap_uniform.pdf', 'power_curves.pdf', 'pareto_frontier.pdf']:
+        plot_file = plots_dir / plot_name
+        plot_file.write_text("dummy PDF content")
+        plot_paths.append(str(plot_file))
+    
+    # Generate report
+    output_path = str(tmp_path / "report.pdf")
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    
+    # Verify report was created
+    assert success is True
+    assert Path(output_path).exists()
+    assert Path(output_path).stat().st_size > 0  # Non-empty file
+
+
+def test_missing_plots(tmp_path):
+    """Test report generation when some plot files are missing."""
+    # Create minimal log data
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 3, 'KO': 3},
+            'total_flies': 6,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.70,
+            'power': 0.75,
+            'bias': 0.12,
+            'efficiency': 0.8,
+            'robustness': 0.18
+        },
+        'warnings': ['Small sample size'],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.70,
+            'worst_composite_score': 0.70,
+            'mean_composite_score': 0.70,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    # Provide non-existent plot paths
+    plot_paths = [
+        '/nonexistent/plot1.pdf',
+        '/nonexistent/plot2.pdf',
+        '/nonexistent/plot3.pdf'
+    ]
+    
+    # Generate report (should succeed despite missing plots)
+    output_path = str(tmp_path / "report.pdf")
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    
+    # Verify report was still created
+    assert success is True
+    assert Path(output_path).exists()
+    assert Path(output_path).stat().st_size > 0
+
+
+def test_long_results(tmp_path):
+    """Test report generation with very long optimization results."""
+    # Create log data with many warnings (simulating long content)
+    long_warnings = [
+        f"Warning {i}: This is a very long warning message that contains "
+        f"detailed information about parameter combination {i} and why it "
+        f"might not be optimal for the current analysis. " * 3
+        for i in range(50)  # 50 long warnings
+    ]
+    
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 10, 'KO': 10},
+            'total_flies': 20,
+            'frame_counts': {
+                'min': 8990,
+                'max': 9010,
+                'mean': 9000.0,
+                'variation': 0.22
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 1000,
+            'parameter_space': {
+                'window_sizes': list(range(100, 1000, 100)),
+                'sampling_rates': [0.05, 0.1, 0.15, 0.2, 0.25, 0.3],
+                'strategies': ['uniform', 'stratified', 'systematic'],
+                'edge_thresholds': [5, 10, 15, 20, 25, 30]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': long_warnings,
+        'validation_metrics': {
+            'total_parameters_evaluated': 1000,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.30,
+            'mean_composite_score': 0.55,
+            'std_composite_score': 0.12
+        }
+    }
+    
+    # Generate report with no plots
+    plot_paths = []
+    output_path = str(tmp_path / "report.pdf")
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    
+    # Verify report was created (proper pagination should handle long content)
+    assert success is True
+    assert Path(output_path).exists()
+    assert Path(output_path).stat().st_size > 0
+
+
+def test_special_characters(tmp_path):
+    """Test proper handling of special characters in text fields."""
+    # Create log data with special characters
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot_exp_2025\\test\\files',  # Backslashes
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {
+                'WT_line#1': 5,  # Underscores and hash
+                'KO_mutant^2': 5  # Caret
+            },
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [100],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': [
+            'File path contains \\ backslashes',
+            'Genotype name has _underscores_ and #special chars',
+            'Values: 10%, $50, & other symbols'
+        ],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.75,
+            'mean_composite_score': 0.75,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    # Generate report
+    plot_paths = []
+    output_path = str(tmp_path / "report.pdf")
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    
+    # Verify report was created without errors (proper escaping)
+    assert success is True
+    assert Path(output_path).exists()
+    assert Path(output_path).stat().st_size > 0
+
+
+def test_pdf_creation_error(tmp_path, monkeypatch):
+    """Test handling of PDF creation errors."""
+    from unittest.mock import MagicMock
+    
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.75,
+            'mean_composite_score': 0.75,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    # Mock PdfPages to raise an error
+    def mock_pdf_pages(*args, **kwargs):
+        raise PermissionError("Cannot write to PDF file")
+    
+    monkeypatch.setattr('matplotlib.backends.backend_pdf.PdfPages', mock_pdf_pages)
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    # Should raise the exception
+    with pytest.raises(PermissionError, match="Cannot write to PDF file"):
+        generate_pdf_report(log_data, plot_paths, output_path)
+
+
+def test_invalid_timestamp_format(tmp_path):
+    """Test handling of invalid timestamp format."""
+    log_data = {
+        'timestamp': 'invalid-timestamp-format',  # Invalid format
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.75,
+            'mean_composite_score': 0.75,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    # Should still succeed (fallback to raw timestamp)
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+
+
+def test_missing_timestamp(tmp_path):
+    """Test handling when timestamp is missing from log_data."""
+    log_data = {
+        # No 'timestamp' key
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.75,
+            'mean_composite_score': 0.75,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    # Should still succeed (use current time)
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+
+
+def test_plot_embedding_exception(tmp_path, monkeypatch, capsys):
+    """Test exception handling during plot embedding."""
+    import matplotlib.pyplot as plt
+    
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.75,
+            'worst_composite_score': 0.75,
+            'mean_composite_score': 0.75,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    # Create a valid plot file
+    plots_dir = tmp_path / "plots"
+    plots_dir.mkdir()
+    plot_file = plots_dir / "test_plot.pdf"
+    plot_file.write_text("dummy PDF content")
+    
+    plot_paths = [str(plot_file)]
+    output_path = str(tmp_path / "report.pdf")
+    
+    # Mock plt.figure to raise error ONLY during plot page creation (4th call)
+    call_count = [0]
+    original_figure = plt.figure
+    
+    def mock_figure(*args, **kwargs):
+        call_count[0] += 1
+        # Fail ONLY on the 4th call (plot page), then allow subsequent calls
+        if call_count[0] == 4:
+            raise RuntimeError("Mock error during plot figure creation")
+        return original_figure(*args, **kwargs)
+    
+    monkeypatch.setattr(plt, 'figure', mock_figure)
+    
+    # Should still succeed (exception caught and warning printed)
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+    
+    # Verify warning was printed
+    captured = capsys.readouterr()
+    assert "Warning: Could not embed plot" in captured.out
+		
+
+def test_power_below_target(tmp_path):
+    """Test warnings when power is below target."""
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8  # Target power
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.65,
+            'power': 0.70,  # Below target of 0.8
+            'bias': 0.12,
+            'efficiency': 0.8,
+            'robustness': 0.18
+        },
+        'warnings': ['Power below target'],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.65,
+            'worst_composite_score': 0.65,
+            'mean_composite_score': 0.65,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+
+
+def test_low_efficiency(tmp_path):
+    """Test handling of low efficiency scores."""
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.9,  # High sampling rate = low efficiency
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.60,
+            'power': 0.90,
+            'bias': 0.05,
+            'efficiency': 0.1,  # Very low efficiency
+            'robustness': 0.10
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.60,
+            'worst_composite_score': 0.60,
+            'mean_composite_score': 0.60,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+
+
+def test_medium_efficiency(tmp_path):
+    """Test handling of medium efficiency scores."""
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.4,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.70,
+            'power': 0.85,
+            'bias': 0.08,
+            'efficiency': 0.6,  # Medium efficiency (0.5-0.7)
+            'robustness': 0.12
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.70,
+            'worst_composite_score': 0.70,
+            'mean_composite_score': 0.70,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+
+
+def test_high_robustness(tmp_path):
+    """Test handling of high robustness scores."""
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.65,
+            'power': 0.80,
+            'bias': 0.10,
+            'efficiency': 0.8,
+            'robustness': 0.5  # High robustness (> 0.4)
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.65,
+            'worst_composite_score': 0.65,
+            'mean_composite_score': 0.65,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
+
+
+def test_medium_robustness(tmp_path):
+    """Test handling of medium robustness scores."""
+    log_data = {
+        'timestamp': '2025-01-15T10:30:00',
+        'config': {
+            'data_dir': '/data/pilot',
+            'expected_frames': 9000,
+            'alpha': 0.05,
+            'power': 0.8
+        },
+        'pilot_summary': {
+            'n_genotypes': 2,
+            'flies_per_genotype': {'WT': 5, 'KO': 5},
+            'total_flies': 10,
+            'frame_counts': {
+                'min': 9000,
+                'max': 9000,
+                'mean': 9000.0,
+                'variation': 0.0
+            }
+        },
+        'optimization_process': {
+            'n_combinations_tested': 10,
+            'parameter_space': {
+                'window_sizes': [300],
+                'sampling_rates': [0.2],
+                'strategies': ['uniform'],
+                'edge_thresholds': [20]
+            },
+            'best_parameters': {
+                'window_size': 300,
+                'sampling_rate': 0.2,
+                'strategy': 'uniform',
+                'edge_threshold': 20
+            }
+        },
+        'best_results': {
+            'composite_score': 0.70,
+            'power': 0.85,
+            'bias': 0.08,
+            'efficiency': 0.8,
+            'robustness': 0.3  # Medium robustness (0.2-0.4)
+        },
+        'warnings': [],
+        'validation_metrics': {
+            'total_parameters_evaluated': 10,
+            'best_composite_score': 0.70,
+            'worst_composite_score': 0.70,
+            'mean_composite_score': 0.70,
+            'std_composite_score': 0.0
+        }
+    }
+    
+    output_path = str(tmp_path / "report.pdf")
+    plot_paths = []
+    
+    success = generate_pdf_report(log_data, plot_paths, output_path)
+    assert success is True
+    assert Path(output_path).exists()
