@@ -1481,3 +1481,193 @@ def generate_visualization_plots(
         print(f"Warning: Could not generate strategy comparison: {e}")
     
     return plot_paths
+
+
+# =============================================================================
+# Unit 11: Generate Detailed Log
+# =============================================================================
+
+def generate_detailed_log(
+    pilot_data: Dict[str, List[List[Tuple[int, int]]]],
+    frame_counts: Dict[str, List[int]],
+    config: Dict,
+    best_params: Dict,
+    all_results: List[Dict],
+    warnings: List[str]
+) -> Dict:
+    """
+    Compile comprehensive optimization log.
+    
+    Creates a detailed JSON-serializable log of the entire optimization process,
+    including configuration, pilot data summary, optimization results, and any
+    warnings encountered during execution.
+    
+    Args:
+        pilot_data: Complete pilot dataset by genotype
+                   Structure: {genotype_name: [fly1_events, fly2_events, ...]}
+        frame_counts: Actual frame counts per genotype and fly
+                     Structure: {genotype_name: [count1, count2, ...]}
+        config: Configuration parameters with keys:
+               - 'data_dir': Path to data directory
+               - 'expected_frames': Expected frame count
+               - 'alpha': Significance level
+               - 'power': Target statistical power
+        best_params: Optimal parameter combination from optimization
+                    Contains: window_size, sampling_rate, strategy, 
+                             edge_threshold, scores
+        all_results: Complete list of all evaluated parameter combinations
+        warnings: List of warning messages generated during execution
+        
+    Returns:
+        Dictionary containing complete log information with sections:
+        - timestamp: ISO 8601 formatted timestamp
+        - config: Configuration parameters used
+        - pilot_summary: Summary statistics of pilot data
+        - optimization_process: Details of optimization procedure
+        - best_results: Performance metrics of best parameters
+        - warnings: List of warnings encountered
+        - validation_metrics: Additional validation information
+        
+    Example:
+        >>> pilot_data = {
+        ...     'WT': [[(100, 150), (200, 250)] for _ in range(5)],
+        ...     'KO': [[(300, 350), (400, 450)] for _ in range(5)]
+        ... }
+        >>> frame_counts = {'WT': [9000] * 5, 'KO': [9000] * 5}
+        >>> config = {
+        ...     'data_dir': '/data/pilot',
+        ...     'expected_frames': 9000,
+        ...     'alpha': 0.05,
+        ...     'power': 0.8
+        ... }
+        >>> best_params = {
+        ...     'window_size': 300,
+        ...     'sampling_rate': 0.2,
+        ...     'strategy': 'uniform',
+        ...     'edge_threshold': 20,
+        ...     'scores': {'composite': 0.75, 'power': 0.85, 'bias': 0.1,
+        ...               'efficiency': 0.8, 'robustness': 0.15}
+        ... }
+        >>> all_results = [best_params]
+        >>> warnings = ['Test warning']
+        >>> log = generate_detailed_log(pilot_data, frame_counts, config,
+        ...                             best_params, all_results, warnings)
+        >>> 'timestamp' in log
+        True
+        >>> log['pilot_summary']['n_genotypes']
+        2
+    """
+    from datetime import datetime
+    import numpy as np
+    
+    # Generate timestamp in ISO 8601 format
+    timestamp = datetime.now().isoformat()
+    
+    # Extract configuration
+    log_config = {
+        'data_dir': config['data_dir'],
+        'expected_frames': config['expected_frames'],
+        'alpha': config['alpha'],
+        'power': config['power']
+    }
+    
+    # Calculate pilot summary statistics
+    n_genotypes = len(pilot_data)
+    flies_per_genotype = {
+        genotype: len(flies) for genotype, flies in pilot_data.items()
+    }
+    total_flies = sum(flies_per_genotype.values())
+    
+    # Aggregate all frame counts
+    all_frame_counts = []
+    for genotype_counts in frame_counts.values():
+        all_frame_counts.extend(genotype_counts)
+    
+    # Calculate frame count statistics
+    if len(all_frame_counts) > 0:
+        min_frames = int(np.min(all_frame_counts))
+        max_frames = int(np.max(all_frame_counts))
+        mean_frames = float(np.mean(all_frame_counts))
+        
+        # Calculate variation as coefficient of variation
+        if mean_frames > 0:
+            std_frames = float(np.std(all_frame_counts))
+            variation = (std_frames / mean_frames) * 100  # As percentage
+        else:
+            variation = 0.0
+    else:
+        min_frames = 0
+        max_frames = 0
+        mean_frames = 0.0
+        variation = 0.0
+    
+    pilot_summary = {
+        'n_genotypes': n_genotypes,
+        'flies_per_genotype': flies_per_genotype,
+        'total_flies': total_flies,
+        'frame_counts': {
+            'min': min_frames,
+            'max': max_frames,
+            'mean': mean_frames,
+            'variation': variation
+        }
+    }
+    
+    # Extract parameter space from all_results
+    # Collect unique values for each parameter
+    window_sizes = sorted(list(set(r['window_size'] for r in all_results)))
+    sampling_rates = sorted(list(set(r['sampling_rate'] for r in all_results)))
+    strategies = sorted(list(set(r['strategy'] for r in all_results)))
+    edge_thresholds = sorted(list(set(r['edge_threshold'] for r in all_results)))
+    
+    parameter_space = {
+        'window_sizes': window_sizes,
+        'sampling_rates': sampling_rates,
+        'strategies': strategies,
+        'edge_thresholds': edge_thresholds
+    }
+    
+    # Extract best parameters (excluding scores for this section)
+    best_parameters = {
+        'window_size': best_params['window_size'],
+        'sampling_rate': best_params['sampling_rate'],
+        'strategy': best_params['strategy'],
+        'edge_threshold': best_params['edge_threshold']
+    }
+    
+    optimization_process = {
+        'n_combinations_tested': len(all_results),
+        'parameter_space': parameter_space,
+        'best_parameters': best_parameters
+    }
+    
+    # Extract best results scores
+    best_results = {
+        'composite_score': best_params['scores']['composite'],
+        'power': best_params['scores']['power'],
+        'bias': best_params['scores']['bias'],
+        'efficiency': best_params['scores']['efficiency'],
+        'robustness': best_params['scores']['robustness']
+    }
+    
+    # Validation metrics (additional information)
+    validation_metrics = {
+        'total_parameters_evaluated': len(all_results),
+        'best_composite_score': best_params['scores']['composite'],
+        'worst_composite_score': min(r['scores']['composite'] for r in all_results),
+        'mean_composite_score': float(np.mean([r['scores']['composite'] for r in all_results])),
+        'std_composite_score': float(np.std([r['scores']['composite'] for r in all_results]))
+    }
+    
+    # Compile complete log
+    log_data = {
+        'timestamp': timestamp,
+        'config': log_config,
+        'pilot_summary': pilot_summary,
+        'optimization_process': optimization_process,
+        'best_results': best_results,
+        'warnings': warnings,
+        'validation_metrics': validation_metrics
+    }
+    
+    return log_data
