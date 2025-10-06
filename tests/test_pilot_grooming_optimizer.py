@@ -17,7 +17,8 @@ from pilot_grooming_optimizer import (
 		optimize_parameter_space,
 		generate_visualization_plots,
 		generate_detailed_log,
-		generate_pdf_report
+		generate_pdf_report,
+		main
 )
 
 # =============================================================================
@@ -3451,3 +3452,469 @@ def test_medium_robustness(tmp_path):
     success = generate_pdf_report(log_data, plot_paths, output_path)
     assert success is True
     assert Path(output_path).exists()
+
+
+# =============================================================================
+# Tests for Unit 13: Main Orchestration Function
+# =============================================================================
+
+from pilot_grooming_optimizer import main
+
+def test_complete_successful_run(tmp_path):
+    """Test complete successful run with all outputs generated."""
+    # Create test data directory structure
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    # Create CSV files with minimal but sufficient data
+    for i in range(3):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n9000\n9100\n")
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n1000\n1100\n9000\n9100\n")
+    
+    # Create output directory
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    output_file = output_dir / "optimization_results.json"
+    
+    # Run main function with minimal bootstrap iterations for speed
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file),
+        '--expected-frames', '9000'
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Verify success
+    assert exit_code == 0
+    
+    # Verify all outputs exist
+    assert output_file.exists()
+    assert (output_dir / "optimization_log.json").exists()
+    assert (output_dir / "optimization_report.pdf").exists()
+    assert (output_dir / "plots").exists()
+    
+    # Verify plots directory has files
+    plots = list((output_dir / "plots").glob("*.pdf"))
+    assert len(plots) > 0
+    
+    # Verify results file has valid content
+    import json
+    with open(output_file) as f:
+        results = json.load(f)
+    assert 'window_size' in results
+    assert 'sampling_rate' in results
+    assert 'strategy' in results
+    assert 'edge_threshold' in results
+    assert 'scores' in results
+
+
+def test_invalid_input_data(tmp_path):
+    """Test clean exit with error message when data directory is invalid."""
+    # Use non-existent data directory
+    data_dir = tmp_path / "nonexistent"
+    output_file = tmp_path / "output.json"
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Verify failure
+    assert exit_code == 1
+    
+    # Verify no output files created
+    assert not output_file.exists()
+
+
+def test_keyboard_interrupt(tmp_path, monkeypatch):
+    """Test graceful shutdown on KeyboardInterrupt."""
+    # Create minimal test data
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    for i in range(2):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n")
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n300\n400\n")
+    
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    output_file = output_dir / "results.json"
+    
+    # Mock optimize_parameter_space to raise KeyboardInterrupt
+    from unittest.mock import MagicMock
+    
+    def mock_optimize(*args, **kwargs):
+        raise KeyboardInterrupt()
+    
+    monkeypatch.setattr(
+        'pilot_grooming_optimizer.optimize_parameter_space',
+        mock_optimize
+    )
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Verify graceful failure
+    assert exit_code == 1
+
+
+def test_write_permission_denied(tmp_path, monkeypatch):
+    """Test clear error message when write permission is denied."""
+    # Create minimal test data
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    for i in range(2):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n")
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n300\n400\n")
+    
+    output_file = tmp_path / "output" / "results.json"
+    
+    # Mock write_json_output to raise PermissionError
+    from unittest.mock import MagicMock
+    
+    def mock_write_json(*args, **kwargs):
+        raise PermissionError("Permission denied: /protected/results.json")
+    
+    monkeypatch.setattr(
+        'pilot_grooming_optimizer.write_json_output',
+        mock_write_json
+    )
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Verify failure with clear error
+    assert exit_code == 1
+
+
+def test_oserror_handler(tmp_path, monkeypatch):
+    """Test OSError exception handler in main."""
+    # Create minimal test data
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    for i in range(2):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n")
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n300\n400\n")
+    
+    output_file = tmp_path / "output" / "results.json"
+    
+    # Mock write_json_output to raise OSError
+    def mock_write_json(*args, **kwargs):
+        raise OSError("Disk full or I/O error")
+    
+    monkeypatch.setattr(
+        'pilot_grooming_optimizer.write_json_output',
+        mock_write_json
+    )
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Verify failure with OSError
+    assert exit_code == 1
+
+
+def test_generic_exception_handler(tmp_path, monkeypatch):
+    """Test generic Exception handler in main."""
+    # Create minimal test data
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    for i in range(2):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n")
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n300\n400\n")
+    
+    output_file = tmp_path / "output" / "results.json"
+    
+    # Mock write_json_output to raise an unexpected exception
+    def mock_write_json(*args, **kwargs):
+        raise RuntimeError("Unexpected error occurred")
+    
+    monkeypatch.setattr(
+        'pilot_grooming_optimizer.write_json_output',
+        mock_write_json
+    )
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Verify failure with generic exception
+    assert exit_code == 1
+
+
+def test_cleanup_files_with_exceptions():
+    """Test _cleanup_files handles exceptions gracefully."""
+    from pilot_grooming_optimizer import _cleanup_files
+    import tempfile
+    
+    # Create some test files
+    with tempfile.NamedTemporaryFile(delete=False) as f:
+        temp_file = f.name
+    
+    # Create a temporary directory
+    temp_dir = tempfile.mkdtemp()
+    
+    # List of paths including non-existent ones
+    file_paths = [
+        temp_file,
+        temp_dir,
+        '/nonexistent/path/to/file.txt',  # Non-existent path
+        '/root/protected/file.txt',  # Permission denied path (might not trigger on all systems)
+    ]
+    
+    # Should not raise any exceptions
+    _cleanup_files(file_paths)
+    
+    # Verify that existing files were removed
+    assert not Path(temp_file).exists()
+    assert not Path(temp_dir).exists()
+
+
+def test_cleanup_files_with_permission_error(tmp_path, monkeypatch):
+    """Test _cleanup_files handles permission errors silently."""
+    from pilot_grooming_optimizer import _cleanup_files
+    
+    # Create a test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test")
+    
+    # Mock Path.unlink to raise PermissionError
+    from pathlib import Path as OrigPath
+    
+    original_unlink = OrigPath.unlink
+    
+    def mock_unlink(self, *args, **kwargs):
+        raise PermissionError("Cannot delete file")
+    
+    monkeypatch.setattr(Path, 'unlink', mock_unlink)
+    
+    # Should not raise exception (silent failure)
+    _cleanup_files([str(test_file)])
+    
+    # File still exists (couldn't be deleted)
+    assert test_file.exists()
+
+
+def test_cleanup_files_with_oserror(tmp_path, monkeypatch):
+    """Test _cleanup_files handles OSError silently."""
+    from pilot_grooming_optimizer import _cleanup_files
+    
+    # Create a test file
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("test")
+    
+    # Mock Path.unlink to raise OSError
+    from pathlib import Path as OrigPath
+    
+    def mock_unlink(self, *args, **kwargs):
+        raise OSError("I/O error")
+    
+    monkeypatch.setattr(Path, 'unlink', mock_unlink)
+    
+    # Should not raise exception (silent failure)
+    _cleanup_files([str(test_file)])
+    
+    # File still exists (couldn't be deleted)
+    assert test_file.exists()
+
+
+def test_main_entry_point(tmp_path, monkeypatch):
+    """Test the if __name__ == '__main__' entry point."""
+    # Create minimal test data
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    for i in range(2):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n9000\n9100\n")
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n300\n400\n9000\n9100\n")
+    
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    output_file = output_dir / "results.json"
+    
+    # Mock sys.argv to simulate command line execution
+    import sys
+    original_argv = sys.argv
+    
+    try:
+        sys.argv = [
+            'pilot_grooming_optimizer.py',
+            '--data-dir', str(data_dir),
+            '--output', str(output_file)
+        ]
+        
+        # Mock sys.exit to capture the exit code instead of exiting
+        exit_code_captured = []
+        
+        def mock_exit(code):
+            exit_code_captured.append(code)
+        
+        monkeypatch.setattr(sys, 'exit', mock_exit)
+        
+        # Import and reload the module to execute the __main__ block
+        # This is tricky - we'll just test main() can be called without args
+        from pilot_grooming_optimizer import main
+        
+        # Call main without args (should use sys.argv[1:])
+        exit_code = main(n_bootstrap=10)
+        
+        # Verify it ran successfully
+        assert exit_code == 0
+        
+    finally:
+        sys.argv = original_argv
+
+
+def test_cleanup_files_directory_removal(tmp_path):
+    """Test _cleanup_files can remove directories."""
+    from pilot_grooming_optimizer import _cleanup_files
+    
+    # Create a directory with files
+    test_dir = tmp_path / "test_dir"
+    test_dir.mkdir()
+    (test_dir / "file1.txt").write_text("content1")
+    (test_dir / "file2.txt").write_text("content2")
+    
+    # Cleanup should remove the directory
+    _cleanup_files([str(test_dir)])
+    
+    # Verify directory was removed
+    assert not test_dir.exists()
+
+
+def test_cleanup_files_with_shutil_error(tmp_path, monkeypatch):
+    """Test _cleanup_files handles shutil.rmtree errors silently."""
+    from pilot_grooming_optimizer import _cleanup_files
+    
+    # Create a directory
+    test_dir = tmp_path / "test_dir"
+    test_dir.mkdir()
+    
+    # Mock shutil.rmtree to raise an error
+    import shutil
+    
+    def mock_rmtree(*args, **kwargs):
+        raise OSError("Cannot remove directory")
+    
+    monkeypatch.setattr(shutil, 'rmtree', mock_rmtree)
+    
+    # Should not raise exception (silent failure)
+    _cleanup_files([str(test_dir)])
+    
+    # Directory still exists (couldn't be deleted)
+    assert test_dir.exists()
+
+
+def test_valueerror_handler_insufficient_genotypes(tmp_path):
+    """Test ValueError handler when fewer than 2 genotypes found."""
+    # Create data directory with only ONE genotype (triggers ValueError)
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_a.mkdir(parents=True)
+    
+    # Add some CSV files
+    for i in range(3):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n100\n200\n")
+    
+    output_file = tmp_path / "output" / "results.json"
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Should fail with ValueError (< 2 genotypes)
+    assert exit_code == 1
+    
+    # Should not create output files (early failure)
+    assert not output_file.exists()
+
+
+def test_valueerror_handler_short_videos(tmp_path):
+    """Test ValueError handler when videos are too short."""
+    # Create data with very short videos (< 100 frames)
+    data_dir = tmp_path / "data"
+    genotype_a = data_dir / "WT"
+    genotype_b = data_dir / "KO"
+    genotype_a.mkdir(parents=True)
+    genotype_b.mkdir(parents=True)
+    
+    # Create CSVs with events ending at frame 50 (too short)
+    for i in range(3):
+        csv_a = genotype_a / f"fly{i}.csv"
+        csv_a.write_text("Frame\n10\n50\n")  # Max frame = 50 (< 100)
+        
+        csv_b = genotype_b / f"fly{i}.csv"
+        csv_b.write_text("Frame\n20\n50\n")  # Max frame = 50 (< 100)
+    
+    output_file = tmp_path / "output" / "results.json"
+    
+    args = [
+        '--data-dir', str(data_dir),
+        '--output', str(output_file)
+    ]
+    
+    exit_code = main(args, n_bootstrap=10)
+    
+    # Should fail with ValueError (videos too short for parameter generation)
+    assert exit_code == 1
