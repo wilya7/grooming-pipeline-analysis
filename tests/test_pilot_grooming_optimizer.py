@@ -14,7 +14,8 @@ from pilot_grooming_optimizer import (
 		calculate_statistical_power,
 		evaluate_parameter_combination,
 		cross_validate_parameters,
-		optimize_parameter_space
+		optimize_parameter_space,
+		generate_visualization_plots
 )
 
 # =============================================================================
@@ -1518,3 +1519,660 @@ def test_progress_tracking():
     # Verify sorting is correct
     for i in range(len(all_results) - 1):
         assert all_results[i]['scores']['composite'] >= all_results[i+1]['scores']['composite']
+
+
+# =============================================================================
+# Tests for Unit 10: Generate Visualization Plots
+# =============================================================================
+
+def test_standard_results(tmp_path):
+    """Test that all expected plots are generated from standard results."""
+    # Create comprehensive results data
+    all_results = []
+    
+    # Generate results for multiple parameter combinations
+    window_sizes = [100, 200, 300]
+    sampling_rates = [0.1, 0.2, 0.3]
+    strategies = ['uniform', 'stratified', 'systematic']
+    
+    for window_size in window_sizes:
+        for sampling_rate in sampling_rates:
+            for strategy in strategies:
+                result = {
+                    'window_size': window_size,
+                    'sampling_rate': sampling_rate,
+                    'strategy': strategy,
+                    'edge_threshold': 10,
+                    'scores': {
+                        'power': 0.7 + (sampling_rate * 0.3),
+                        'bias': 0.1 + (sampling_rate * 0.1),
+                        'efficiency': 1.0 - sampling_rate,
+                        'robustness': 0.2,
+                        'composite': 0.6 + (sampling_rate * 0.2)
+                    }
+                }
+                all_results.append(result)
+    
+    # Generate plots
+    output_dir = str(tmp_path / "plots")
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Verify plots were generated
+    assert len(plot_paths) > 0
+    
+    # Expected plots:
+    # - 3 heat maps (one per strategy)
+    # - 1 power curves
+    # - 1 pareto frontier
+    # - 1 bias assessment
+    # - 1 strategy comparison
+    # Total: 7 plots
+    assert len(plot_paths) == 7
+    
+    # Verify all files exist
+    for plot_path in plot_paths:
+        assert Path(plot_path).exists()
+        assert Path(plot_path).suffix == '.pdf'
+    
+    # Verify expected file names are present
+    plot_names = [Path(p).name for p in plot_paths]
+    assert 'heatmap_uniform.pdf' in plot_names
+    assert 'heatmap_stratified.pdf' in plot_names
+    assert 'heatmap_systematic.pdf' in plot_names
+    assert 'power_curves.pdf' in plot_names
+    assert 'pareto_frontier.pdf' in plot_names
+    assert 'bias_assessment.pdf' in plot_names
+    assert 'strategy_comparison.pdf' in plot_names
+
+
+def test_missing_output_dir(tmp_path):
+    """Test that missing output directory is created automatically."""
+    # Create results data
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    # Use a non-existent nested directory path
+    output_dir = str(tmp_path / "level1" / "level2" / "level3" / "plots")
+    
+    # Verify directory doesn't exist yet
+    assert not Path(output_dir).exists()
+    
+    # Generate plots
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Verify directory was created
+    assert Path(output_dir).exists()
+    assert Path(output_dir).is_dir()
+    
+    # Verify plots were generated
+    assert len(plot_paths) > 0
+    
+    # Verify all files exist in the created directory
+    for plot_path in plot_paths:
+        assert Path(plot_path).exists()
+        assert Path(plot_path).parent == Path(output_dir)
+
+
+def test_single_parameter_combo(tmp_path):
+    """Test handling of only one parameter combination."""
+    # Create results with only one combination
+    all_results = [
+        {
+            'window_size': 300,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.85,
+                'bias': 0.05,
+                'efficiency': 0.8,
+                'robustness': 0.15,
+                'composite': 0.75
+            }
+        }
+    ]
+    
+    # Generate plots
+    output_dir = str(tmp_path / "plots")
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should still generate plots (even if some are less informative)
+    assert len(plot_paths) > 0
+    
+    # Verify all files exist and are PDFs
+    for plot_path in plot_paths:
+        assert Path(plot_path).exists()
+        assert Path(plot_path).suffix == '.pdf'
+    
+    # Should have at least:
+    # - 1 heat map (for the one strategy)
+    # - 1 strategy comparison (with one bar)
+    # - potentially others depending on implementation
+    assert len(plot_paths) >= 2
+
+
+def test_invalid_data_values(tmp_path):
+    """Test handling of NaN and inf values in results."""
+    # Create results with problematic values
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.1,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': float('nan'),  # NaN value
+                'bias': 0.1,
+                'efficiency': 0.9,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        },
+        {
+            'window_size': 200,
+            'sampling_rate': 0.2,
+            'strategy': 'stratified',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': float('inf'),  # Inf value
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.65
+            }
+        },
+        {
+            'window_size': 300,
+            'sampling_rate': 0.3,
+            'strategy': 'systematic',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.75,
+                'bias': 0.15,
+                'efficiency': float('-inf'),  # -Inf value
+                'robustness': 0.25,
+                'composite': 0.6
+            }
+        },
+        # Add some valid data too
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    # Generate plots - should handle gracefully without crashing
+    output_dir = str(tmp_path / "plots")
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should still generate some plots (handling invalid data appropriately)
+    # The function should not crash even with NaN/inf values
+    assert isinstance(plot_paths, list)
+    
+    # Verify returned paths are valid
+    for plot_path in plot_paths:
+        assert isinstance(plot_path, str)
+        if Path(plot_path).exists():
+            assert Path(plot_path).suffix == '.pdf'
+
+
+def test_dataframe_conversion_error(tmp_path):
+    """Test handling of error during DataFrame conversion."""
+    # Create malformed results that will cause DataFrame conversion to fail
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            # Missing 'strategy' key - will cause issues
+            'edge_threshold': 10,
+            'scores': None  # This will cause problems
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Should handle gracefully and return empty list
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should return empty list when DataFrame conversion fails
+    assert isinstance(plot_paths, list)
+    assert len(plot_paths) == 0
+
+
+def test_heatmap_error(tmp_path, monkeypatch):
+    """Test error handling during heat map generation."""
+    from unittest.mock import MagicMock
+    import pandas as pd
+    
+    # Create valid results
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock pivot_table to raise an error
+    original_pivot = pd.DataFrame.pivot_table
+    def mock_pivot(*args, **kwargs):
+        raise ValueError("Mocked pivot error")
+    
+    monkeypatch.setattr(pd.DataFrame, 'pivot_table', mock_pivot)
+    
+    # Should handle error gracefully and continue
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should still be a list (but heat maps won't be generated)
+    assert isinstance(plot_paths, list)
+
+
+def test_power_curves_error(tmp_path, monkeypatch, capsys):
+    """Test error handling during power curves generation."""
+    import matplotlib.pyplot as plt
+    from unittest.mock import MagicMock
+    
+    # Create valid results
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock plt.subplots to raise error during power curves
+    original_subplots = plt.subplots
+    call_count = [0]
+    
+    def mock_subplots(*args, **kwargs):
+        call_count[0] += 1
+        # Fail on second call (power curves section)
+        if call_count[0] == 2:
+            raise RuntimeError("Mocked power curves error")
+        return original_subplots(*args, **kwargs)
+    
+    monkeypatch.setattr(plt, 'subplots', mock_subplots)
+    
+    # Should handle error gracefully
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Verify warning was printed
+    captured = capsys.readouterr()
+    assert "Warning: Could not generate power curves" in captured.out
+    
+    # Should still be a list
+    assert isinstance(plot_paths, list)
+
+
+def test_pareto_frontier_error(tmp_path, monkeypatch, capsys):
+    """Test error handling during Pareto frontier generation."""
+    import matplotlib.pyplot as plt
+    
+    # Create valid results
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock plt.subplots to raise error during Pareto frontier
+    original_subplots = plt.subplots
+    call_count = [0]
+    
+    def mock_subplots(*args, **kwargs):
+        call_count[0] += 1
+        # Fail on third call (Pareto frontier section)
+        if call_count[0] == 3:
+            raise RuntimeError("Mocked Pareto error")
+        return original_subplots(*args, **kwargs)
+    
+    monkeypatch.setattr(plt, 'subplots', mock_subplots)
+    
+    # Should handle error gracefully
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Verify warning was printed
+    captured = capsys.readouterr()
+    assert "Warning: Could not generate Pareto frontier" in captured.out
+    
+    # Should still be a list
+    assert isinstance(plot_paths, list)
+
+
+def test_bias_assessment_error(tmp_path, monkeypatch, capsys):
+    """Test error handling during bias assessment generation."""
+    import matplotlib.pyplot as plt
+    
+    # Create valid results
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock plt.subplots to raise error during bias assessment
+    original_subplots = plt.subplots
+    call_count = [0]
+    
+    def mock_subplots(*args, **kwargs):
+        call_count[0] += 1
+        # Fail on fourth call (bias assessment section)
+        if call_count[0] == 4:
+            raise RuntimeError("Mocked bias assessment error")
+        return original_subplots(*args, **kwargs)
+    
+    monkeypatch.setattr(plt, 'subplots', mock_subplots)
+    
+    # Should handle error gracefully
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Verify warning was printed
+    captured = capsys.readouterr()
+    assert "Warning: Could not generate bias assessment" in captured.out
+    
+    # Should still be a list
+    assert isinstance(plot_paths, list)
+
+
+def test_strategy_comparison_error(tmp_path, monkeypatch, capsys):
+    """Test error handling during strategy comparison generation."""
+    import matplotlib.pyplot as plt
+    
+    # Create valid results
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock plt.subplots to raise error during strategy comparison
+    original_subplots = plt.subplots
+    call_count = [0]
+    
+    def mock_subplots(*args, **kwargs):
+        call_count[0] += 1
+        # Fail on fifth call (strategy comparison section)
+        if call_count[0] == 5:
+            raise RuntimeError("Mocked strategy comparison error")
+        return original_subplots(*args, **kwargs)
+    
+    monkeypatch.setattr(plt, 'subplots', mock_subplots)
+    
+    # Should handle error gracefully
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Verify warning was printed
+    captured = capsys.readouterr()
+    assert "Warning: Could not generate strategy comparison" in captured.out
+    
+    # Should still be a list
+    assert isinstance(plot_paths, list)
+
+
+def test_empty_pivot_table(tmp_path):
+    """Test handling when pivot table is empty for heat map."""
+    # Create results where all strategies have the same window_size and sampling_rate
+    # This can create issues with pivot tables
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        },
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'stratified',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.75,
+                'bias': 0.12,
+                'efficiency': 0.8,
+                'robustness': 0.22,
+                'composite': 0.68
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Should handle gracefully
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should still generate some plots (just not heat maps with varied data)
+    assert isinstance(plot_paths, list)
+
+
+def test_empty_strategy_data(tmp_path, monkeypatch):
+    """Test skip when strategy filter returns no data (line 1261)."""
+    import pandas as pd
+    
+    # Create valid results with one strategy
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock the unique() method to return a strategy that doesn't exist in the data
+    original_unique = pd.Series.unique
+    
+    def mock_unique(self):
+        # Return strategies that don't exist in the actual data
+        if 'strategy' in str(self.name):
+            return ['nonexistent_strategy_1', 'nonexistent_strategy_2']
+        return original_unique(self)
+    
+    monkeypatch.setattr(pd.Series, 'unique', mock_unique)
+    
+    # Should handle gracefully - skipping strategies with no data
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should still return a list (but no heat maps generated)
+    assert isinstance(plot_paths, list)
+
+
+def test_empty_pivot_table_coverage(tmp_path, monkeypatch):
+    """Test skip when pivot table is empty (line 1273)."""
+    import pandas as pd
+    
+    # Create valid results
+    all_results = [
+        {
+            'window_size': 100,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.8,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.2,
+                'composite': 0.7
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Mock pivot_table to return empty DataFrame
+    original_pivot_table = pd.DataFrame.pivot_table
+    
+    def mock_pivot_table(self, **kwargs):
+        # Return empty DataFrame for heat map pivots
+        if 'values' in kwargs and kwargs.get('values') == 'composite':
+            return pd.DataFrame()
+        return original_pivot_table(self, **kwargs)
+    
+    monkeypatch.setattr(pd.DataFrame, 'pivot_table', mock_pivot_table)
+    
+    # Should handle gracefully - skipping empty pivot tables
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should still return a list (but heat maps skipped due to empty pivots)
+    assert isinstance(plot_paths, list)
+
+
+def test_pareto_dominated_point(tmp_path):
+    """Test Pareto frontier logic where a point is dominated (lines 1350-1351)."""
+    # Create results where some points are clearly dominated by others
+    all_results = [
+        # Point 1: Low efficiency, low power - DOMINATED
+        {
+            'window_size': 100,
+            'sampling_rate': 0.8,  # High sampling = low efficiency
+            'strategy': 'uniform',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.3,  # Low power
+                'bias': 0.1,
+                'efficiency': 0.2,  # Low efficiency (1 - 0.8)
+                'robustness': 0.2,
+                'composite': 0.4
+            }
+        },
+        # Point 2: High efficiency, high power - DOMINATES Point 1
+        {
+            'window_size': 200,
+            'sampling_rate': 0.2,  # Low sampling = high efficiency
+            'strategy': 'stratified',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.9,  # High power
+                'bias': 0.05,
+                'efficiency': 0.8,  # High efficiency (1 - 0.2)
+                'robustness': 0.15,
+                'composite': 0.8
+            }
+        },
+        # Point 3: Medium efficiency, medium power - NOT dominated
+        {
+            'window_size': 150,
+            'sampling_rate': 0.5,
+            'strategy': 'systematic',
+            'edge_threshold': 10,
+            'scores': {
+                'power': 0.6,
+                'bias': 0.08,
+                'efficiency': 0.5,
+                'robustness': 0.18,
+                'composite': 0.6
+            }
+        }
+    ]
+    
+    output_dir = str(tmp_path / "plots")
+    
+    # Generate plots
+    plot_paths = generate_visualization_plots(all_results, output_dir)
+    
+    # Should successfully generate Pareto frontier plot
+    plot_names = [Path(p).name for p in plot_paths]
+    assert 'pareto_frontier.pdf' in plot_names
+    
+    # Verify the plot was created
+    pareto_plot = [p for p in plot_paths if 'pareto_frontier' in p][0]
+    assert Path(pareto_plot).exists()
+    
+    # The key here is that Point 1 should be identified as non-Pareto (dominated)
+    # because Point 2 has BOTH higher efficiency AND higher power
+    # This triggers lines 1350-1351: is_pareto = False, break
