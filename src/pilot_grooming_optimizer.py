@@ -994,3 +994,152 @@ def cross_validate_parameters(
     }
     
     return cv_results
+
+
+# =============================================================================
+# Unit 9: Optimize Across Parameter Space
+# =============================================================================
+
+def optimize_parameter_space(
+    pilot_data: Dict[str, List[List[Tuple[int, int]]]],
+    parameter_space: Dict,
+    config: Dict,
+    n_bootstrap: int = 10000
+) -> Tuple[Dict, List[Dict]]:
+    """
+    Find optimal parameters through exhaustive search.
+    
+    Evaluates all possible parameter combinations from the parameter space,
+    scoring each based on statistical power, bias, efficiency, and robustness.
+    Returns the best combination and complete results for all combinations.
+    
+    Args:
+        pilot_data: Complete pilot dataset by genotype
+                   Structure: {genotype_name: [fly1_events, fly2_events, ...]}
+        parameter_space: All parameter combinations with keys:
+                        - 'window_sizes': List of window sizes
+                        - 'sampling_rates': List of sampling rates
+                        - 'strategies': List of sampling strategies
+                        - 'edge_thresholds': List of edge thresholds
+        config: Optimization configuration with keys:
+               - 'alpha': Significance level
+               - 'power': Target statistical power (for reference/threshold)
+               - 'expected_frames': Expected frame count
+        n_bootstrap: Number of bootstrap iterations (default: 10000)
+    
+    Returns:
+        Tuple containing:
+        - best_params: Dictionary with optimal parameter combination
+        - all_results: List of all evaluation results (sorted by composite score)
+    
+    Result Structure:
+        Each result dict contains:
+        {
+            'window_size': int,
+            'sampling_rate': float,
+            'strategy': str,
+            'edge_threshold': int,
+            'scores': {
+                'power': float,
+                'bias': float,
+                'efficiency': float,
+                'robustness': float,
+                'composite': float
+            }
+        }
+    
+    Algorithm:
+        1. Generate all combinations using itertools.product
+        2. Evaluate each combination with progress tracking
+        3. Sort results by composite score (descending)
+        4. Select best parameters
+        5. Warn if best parameters don't meet power threshold
+    
+    Example:
+        >>> pilot_data = {
+        ...     'WT': [[(100, 150), (200, 250)] for _ in range(5)],
+        ...     'KO': [[(300, 350), (400, 450)] for _ in range(5)]
+        ... }
+        >>> parameter_space = {
+        ...     'window_sizes': [100, 200, 300],
+        ...     'sampling_rates': [0.1, 0.2, 0.3],
+        ...     'strategies': ['uniform', 'stratified'],
+        ...     'edge_thresholds': [10, 20]
+        ... }
+        >>> config = {'alpha': 0.05, 'power': 0.8, 'expected_frames': 9000}
+        >>> best_params, all_results = optimize_parameter_space(
+        ...     pilot_data, parameter_space, config, n_bootstrap=100
+        ... )
+        >>> best_params['scores']['composite'] >= all_results[-1]['scores']['composite']
+        True
+    """
+    import itertools
+    from tqdm import tqdm
+    
+    # Extract parameter lists
+    window_sizes = parameter_space['window_sizes']
+    sampling_rates = parameter_space['sampling_rates']
+    strategies = parameter_space['strategies']
+    edge_thresholds = parameter_space['edge_thresholds']
+    
+    # Generate all parameter combinations
+    combinations = list(itertools.product(
+        window_sizes,
+        sampling_rates,
+        strategies,
+        edge_thresholds
+    ))
+    
+    total_combinations = len(combinations)
+    
+    # Initialize results storage
+    all_results = []
+    best_score = 0.0
+    
+    # Evaluate each combination with progress tracking
+    with tqdm(total=total_combinations, desc="Optimizing parameters") as pbar:
+        for window_size, sampling_rate, strategy, edge_threshold in combinations:
+            # Create parameter dictionary
+            params = {
+                'window_size': window_size,
+                'sampling_rate': sampling_rate,
+                'strategy': strategy,
+                'edge_threshold': edge_threshold
+            }
+            
+            # Evaluate this combination
+            scores = evaluate_parameter_combination(
+                pilot_data, params, config, n_bootstrap=n_bootstrap
+            )
+            
+            # Store result with parameters
+            result = {
+                'window_size': window_size,
+                'sampling_rate': sampling_rate,
+                'strategy': strategy,
+                'edge_threshold': edge_threshold,
+                'scores': scores
+            }
+            all_results.append(result)
+            
+            # Update best score for progress display
+            if scores['composite'] > best_score:
+                best_score = scores['composite']
+                pbar.set_postfix({'best_score': f"{best_score:.4f}"})
+            
+            # Update progress bar
+            pbar.update(1)
+    
+    # Sort results by composite score (descending - highest first)
+    all_results.sort(key=lambda x: x['scores']['composite'], reverse=True)
+    
+    # Select best parameters (first in sorted list)
+    best_params = all_results[0]
+    
+    # Check if best parameters meet power threshold
+    target_power = config['power']
+    if best_params['scores']['power'] < target_power:
+        print(f"\nWarning: Best parameters achieve power of {best_params['scores']['power']:.4f}, "
+              f"which is below target power of {target_power:.4f}")
+    
+    return best_params, all_results
