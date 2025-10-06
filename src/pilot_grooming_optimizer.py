@@ -862,3 +862,135 @@ def evaluate_parameter_combination(
         'robustness': normalized_robustness,
         'composite': composite
     }
+
+
+# =============================================================================
+# Unit 8: Cross-Validation Framework
+# =============================================================================
+
+def cross_validate_parameters(
+    data: Dict[str, List[List[Tuple[int, int]]]],
+    params: Dict,
+    n_folds: int,
+    seed: int
+) -> Dict:
+    """
+    Assess parameter stability using k-fold cross-validation.
+    
+    Performs stratified cross-validation by splitting data by genotype,
+    evaluating parameters on each fold, and calculating mean/std of metrics.
+    This helps determine if parameter performance is stable across different
+    data subsets, which is crucial for generalizing to new experiments.
+    
+    Args:
+        data: Pilot data by genotype
+              Structure: {genotype_name: [fly1_events, fly2_events, ...]}
+        params: Parameters to validate with keys:
+               - window_size: Size of sampling window in frames
+               - sampling_rate: Proportion of windows to sample (0-1)
+               - strategy: Sampling strategy ('uniform', 'stratified', 'systematic')
+               - edge_threshold: Maximum acceptable edge event percentage
+        n_folds: Number of CV folds (will be adjusted if dataset is too small)
+        seed: Random seed for reproducibility
+        
+    Returns:
+        Dictionary containing CV results:
+        - 'power_mean': Mean statistical power across folds
+        - 'power_std': Std of statistical power across folds
+        - 'bias_mean': Mean bias across folds
+        - 'bias_std': Std of bias across folds
+        - 'composite_mean': Mean composite score across folds
+        - 'composite_std': Std of composite score across folds
+        - 'n_folds': Actual number of folds used
+        
+    Cross-Validation Process:
+        1. Determine actual fold count (min of n_folds and smallest genotype size)
+        2. For each fold:
+           - Extract test subset (stratified by genotype)
+           - Evaluate parameters on test subset
+           - Record power, bias, and composite scores
+        3. Calculate mean and standard deviation across all folds
+        
+    Edge Cases:
+        - If dataset has < n_folds samples per genotype, fold count is adjusted
+        - Ensures no data leakage between folds (each sample appears in exactly one fold)
+        - Uses stratified splitting to ensure each fold has both genotypes
+        
+    Example:
+        >>> data = {
+        ...     'WT': [[(100, 150)], [(200, 250)], [(300, 350)], [(400, 450)], [(500, 550)]],
+        ...     'KO': [[(600, 650)], [(700, 750)], [(800, 850)], [(900, 950)], [(1000, 1050)]]
+        ... }
+        >>> params = {'window_size': 300, 'sampling_rate': 0.2, 
+        ...           'strategy': 'uniform', 'edge_threshold': 20}
+        >>> results = cross_validate_parameters(data, params, n_folds=5, seed=42)
+        >>> results['n_folds']
+        5
+        >>> 0 <= results['power_mean'] <= 1
+        True
+    """
+    from sklearn.model_selection import KFold
+    from tqdm import tqdm
+    import numpy as np
+    
+    # Determine actual number of folds based on smallest genotype
+    genotype_names = list(data.keys())
+    min_samples = min(len(data[genotype]) for genotype in genotype_names)
+    actual_folds = min(n_folds, min_samples)
+    
+    # Initialize KFold with seed for reproducibility
+    kfold = KFold(n_splits=actual_folds, shuffle=True, random_state=seed)
+    
+    # Create fold indices for each genotype
+    fold_indices = {}
+    for genotype_name in genotype_names:
+        n_samples = len(data[genotype_name])
+        indices = np.arange(n_samples)
+        fold_indices[genotype_name] = list(kfold.split(indices))
+    
+    # Track metrics across folds
+    fold_metrics = []
+    
+    # Configuration for evaluation (using standard defaults)
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    # Iterate through folds with progress tracking
+    for fold_idx in tqdm(range(actual_folds), desc="Cross-validation folds"):
+        # Create test set for this fold (stratified by genotype)
+        test_data = {}
+        for genotype_name in genotype_names:
+            _, test_idx = fold_indices[genotype_name][fold_idx]
+            test_data[genotype_name] = [data[genotype_name][i] for i in test_idx]
+        
+        # Evaluate parameters on test set
+        scores = evaluate_parameter_combination(
+            test_data, params, config, n_bootstrap=1000
+        )
+        
+        # Record metrics for this fold
+        fold_metrics.append({
+            'power': scores['power'],
+            'bias': scores['bias'],
+            'composite': scores['composite']
+        })
+    
+    # Calculate mean and std across folds
+    power_values = [m['power'] for m in fold_metrics]
+    bias_values = [m['bias'] for m in fold_metrics]
+    composite_values = [m['composite'] for m in fold_metrics]
+    
+    cv_results = {
+        'power_mean': float(np.mean(power_values)),
+        'power_std': float(np.std(power_values)),
+        'bias_mean': float(np.mean(bias_values)),
+        'bias_std': float(np.std(bias_values)),
+        'composite_mean': float(np.mean(composite_values)),
+        'composite_std': float(np.std(composite_values)),
+        'n_folds': actual_folds
+    }
+    
+    return cv_results
