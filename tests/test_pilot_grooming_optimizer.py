@@ -13,7 +13,8 @@ from pilot_grooming_optimizer import (
 		simulate_window_sampling,
 		calculate_statistical_power,
 		evaluate_parameter_combination,
-		cross_validate_parameters
+		cross_validate_parameters,
+		optimize_parameter_space
 )
 
 # =============================================================================
@@ -1281,3 +1282,239 @@ def test_reproducibility():
     assert (results1['power_mean'] != results3['power_mean'] or
             results1['bias_mean'] != results3['bias_mean'] or
             results1['composite_mean'] != results3['composite_mean'])
+
+
+# =============================================================================
+# Tests for Unit 9: Optimize Parameter Space
+# =============================================================================
+
+def test_multiple_viable_params():
+    """Test that highest composite score is selected from multiple viable parameters."""
+    # Create pilot data with clear difference between genotypes
+    pilot_data = {
+        'WT': [[(i*100, i*100 + 50)] for i in range(5)],
+        'KO': [[(i*100 + 1000, i*100 + 1050)] for i in range(5)]
+    }
+    
+    # Create parameter space with multiple combinations
+    parameter_space = {
+        'window_sizes': [100, 200],
+        'sampling_rates': [0.2, 0.3],
+        'strategies': ['uniform', 'stratified'],
+        'edge_thresholds': [10, 20]
+    }
+    # Total combinations: 2 * 2 * 2 * 2 = 16
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    # Run optimization with smaller n_bootstrap for faster testing
+    best_params, all_results = optimize_parameter_space(
+        pilot_data, parameter_space, config, n_bootstrap=50
+    )
+    
+    # Verify we got results for all combinations
+    assert len(all_results) == 16
+    
+    # Verify best_params is the first in all_results (highest composite)
+    assert best_params == all_results[0]
+    
+    # Verify all_results is sorted by composite score (descending)
+    composite_scores = [r['scores']['composite'] for r in all_results]
+    assert composite_scores == sorted(composite_scores, reverse=True)
+    
+    # Verify best_params has highest composite score
+    assert best_params['scores']['composite'] >= all_results[-1]['scores']['composite']
+    
+    # Verify structure of best_params
+    assert 'window_size' in best_params
+    assert 'sampling_rate' in best_params
+    assert 'strategy' in best_params
+    assert 'edge_threshold' in best_params
+    assert 'scores' in best_params
+    
+    # Verify scores structure
+    assert 'power' in best_params['scores']
+    assert 'bias' in best_params['scores']
+    assert 'efficiency' in best_params['scores']
+    assert 'robustness' in best_params['scores']
+    assert 'composite' in best_params['scores']
+    
+    # Verify all scores are in valid ranges
+    assert 0 <= best_params['scores']['power'] <= 1
+    assert 0 <= best_params['scores']['bias'] <= 1
+    assert 0 <= best_params['scores']['efficiency'] <= 1
+    assert 0 <= best_params['scores']['robustness'] <= 1
+    assert 0 <= best_params['scores']['composite'] <= 1
+
+
+def test_no_params_meet_threshold(capsys):
+    """Test warning when no parameters meet power threshold."""
+    # Create pilot data with very similar groups (low power expected)
+    pilot_data = {
+        'WT': [[(i*100, i*100 + 10)] for i in range(3)],
+        'KO': [[(i*100, i*100 + 11)] for i in range(3)]  # Very similar to WT
+    }
+    
+    # Limited parameter space with poor parameters
+    parameter_space = {
+        'window_sizes': [100],
+        'sampling_rates': [0.05],  # Very low sampling rate
+        'strategies': ['uniform'],
+        'edge_thresholds': [10]
+    }
+    # Total combinations: 1
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.95,  # Very high target that likely won't be met
+        'expected_frames': 9000
+    }
+    
+    # Run optimization
+    best_params, all_results = optimize_parameter_space(
+        pilot_data, parameter_space, config, n_bootstrap=50
+    )
+    
+    # Verify we still got results
+    assert len(all_results) == 1
+    assert best_params == all_results[0]
+    
+    # Capture printed output to check for warning
+    captured = capsys.readouterr()
+    
+    # Verify warning was printed
+    assert "Warning" in captured.out
+    assert "below target power" in captured.out
+    
+    # Verify best parameters are returned anyway (even if below threshold)
+    assert best_params['scores']['power'] < config['power']
+    
+    # Verify structure is still correct
+    assert 'window_size' in best_params
+    assert 'scores' in best_params
+    assert 'composite' in best_params['scores']
+
+
+def test_tie_in_scores():
+    """Test consistent selection when two params have identical composite scores."""
+    # Create pilot data
+    pilot_data = {
+        'WT': [[(i*100, i*100 + 50)] for i in range(3)],
+        'KO': [[(i*100 + 500, i*100 + 550)] for i in range(3)]
+    }
+    
+    # Create parameter space with two window sizes
+    # (other parameters identical to create potential ties)
+    parameter_space = {
+        'window_sizes': [100, 200],
+        'sampling_rates': [0.2],
+        'strategies': ['uniform'],
+        'edge_thresholds': [10]
+    }
+    # Total combinations: 2 * 1 * 1 * 1 = 2
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    # Run optimization multiple times to verify consistency
+    best_params1, all_results1 = optimize_parameter_space(
+        pilot_data, parameter_space, config, n_bootstrap=50
+    )
+    best_params2, all_results2 = optimize_parameter_space(
+        pilot_data, parameter_space, config, n_bootstrap=50
+    )
+    
+    # Verify we got 2 results both times
+    assert len(all_results1) == 2
+    assert len(all_results2) == 2
+    
+    # Should get consistent selection
+    # (even if scores are identical, sorting is stable, so first occurrence wins)
+    assert best_params1['window_size'] == best_params2['window_size']
+    assert best_params1['sampling_rate'] == best_params2['sampling_rate']
+    assert best_params1['strategy'] == best_params2['strategy']
+    assert best_params1['edge_threshold'] == best_params2['edge_threshold']
+    
+    # Verify results are sorted properly
+    assert all_results1[0]['scores']['composite'] >= all_results1[1]['scores']['composite']
+    assert all_results2[0]['scores']['composite'] >= all_results2[1]['scores']['composite']
+
+
+def test_progress_tracking():
+    """Test that progress bar updates correctly and all combinations are evaluated."""
+    # Create pilot data
+    pilot_data = {
+        'WT': [[(100, 150), (200, 250)] for _ in range(3)],
+        'KO': [[(300, 350), (400, 450)] for _ in range(3)]
+    }
+    
+    # Create small parameter space for faster testing
+    parameter_space = {
+        'window_sizes': [100, 200],
+        'sampling_rates': [0.2, 0.3],
+        'strategies': ['uniform'],
+        'edge_thresholds': [10]
+    }
+    # Total: 2 * 2 * 1 * 1 = 4 combinations
+    
+    config = {
+        'alpha': 0.05,
+        'power': 0.8,
+        'expected_frames': 9000
+    }
+    
+    # Run optimization (tqdm will show progress)
+    best_params, all_results = optimize_parameter_space(
+        pilot_data, parameter_space, config, n_bootstrap=50
+    )
+    
+    # Verify all combinations were evaluated
+    expected_combinations = 4
+    assert len(all_results) == expected_combinations
+    
+    # Verify each unique combination is present
+    combinations_seen = set()
+    for result in all_results:
+        combo = (
+            result['window_size'],
+            result['sampling_rate'],
+            result['strategy'],
+            result['edge_threshold']
+        )
+        combinations_seen.add(combo)
+    
+    # All 4 unique combinations should be present
+    assert len(combinations_seen) == expected_combinations
+    
+    # Verify results structure
+    for result in all_results:
+        assert 'window_size' in result
+        assert 'sampling_rate' in result
+        assert 'strategy' in result
+        assert 'edge_threshold' in result
+        assert 'scores' in result
+        
+        # Verify all score components are present
+        assert 'power' in result['scores']
+        assert 'bias' in result['scores']
+        assert 'efficiency' in result['scores']
+        assert 'robustness' in result['scores']
+        assert 'composite' in result['scores']
+        
+        # Verify scores are in valid ranges
+        assert 0 <= result['scores']['power'] <= 1
+        assert 0 <= result['scores']['bias'] <= 1
+        assert 0 <= result['scores']['efficiency'] <= 1
+        assert 0 <= result['scores']['robustness'] <= 1
+        assert 0 <= result['scores']['composite'] <= 1
+    
+    # Verify sorting is correct
+    for i in range(len(all_results) - 1):
+        assert all_results[i]['scores']['composite'] >= all_results[i+1]['scores']['composite']
