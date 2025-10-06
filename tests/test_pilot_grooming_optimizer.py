@@ -15,7 +15,8 @@ from pilot_grooming_optimizer import (
 		evaluate_parameter_combination,
 		cross_validate_parameters,
 		optimize_parameter_space,
-		generate_visualization_plots
+		generate_visualization_plots,
+		generate_detailed_log
 )
 
 # =============================================================================
@@ -2176,3 +2177,398 @@ def test_pareto_dominated_point(tmp_path):
     # The key here is that Point 1 should be identified as non-Pareto (dominated)
     # because Point 2 has BOTH higher efficiency AND higher power
     # This triggers lines 1350-1351: is_pareto = False, break
+
+
+# =============================================================================
+# Tests for Unit 11: Generate Detailed Log
+# =============================================================================
+
+def test_complete_optimization():
+    """Test full optimization run with all sections populated."""
+    # Create comprehensive pilot data
+    pilot_data = {
+        'WT': [[(100, 150), (200, 250)] for _ in range(5)],
+        'KO': [[(300, 350), (400, 450)] for _ in range(5)]
+    }
+    
+    frame_counts = {
+        'WT': [9000, 9010, 8990, 9005, 9000],
+        'KO': [9000, 9000, 8995, 9010, 9005]
+    }
+    
+    config = {
+        'data_dir': '/data/pilot',
+        'expected_frames': 9000,
+        'alpha': 0.05,
+        'power': 0.8
+    }
+    
+    # Create multiple results
+    all_results = [
+        {
+            'window_size': 300,
+            'sampling_rate': 0.2,
+            'strategy': 'uniform',
+            'edge_threshold': 20,
+            'scores': {
+                'composite': 0.75,
+                'power': 0.85,
+                'bias': 0.1,
+                'efficiency': 0.8,
+                'robustness': 0.15
+            }
+        },
+        {
+            'window_size': 200,
+            'sampling_rate': 0.3,
+            'strategy': 'stratified',
+            'edge_threshold': 10,
+            'scores': {
+                'composite': 0.70,
+                'power': 0.80,
+                'bias': 0.15,
+                'efficiency': 0.7,
+                'robustness': 0.20
+            }
+        }
+    ]
+    
+    best_params = all_results[0]
+    warnings = []
+    
+    # Generate log
+    log = generate_detailed_log(
+        pilot_data, frame_counts, config, best_params, all_results, warnings
+    )
+    
+    # Verify all top-level sections exist
+    assert 'timestamp' in log
+    assert 'config' in log
+    assert 'pilot_summary' in log
+    assert 'optimization_process' in log
+    assert 'best_results' in log
+    assert 'warnings' in log
+    assert 'validation_metrics' in log
+    
+    # Verify config section
+    assert log['config']['data_dir'] == '/data/pilot'
+    assert log['config']['expected_frames'] == 9000
+    assert log['config']['alpha'] == 0.05
+    assert log['config']['power'] == 0.8
+    
+    # Verify pilot_summary section
+    assert log['pilot_summary']['n_genotypes'] == 2
+    assert log['pilot_summary']['flies_per_genotype'] == {'WT': 5, 'KO': 5}
+    assert log['pilot_summary']['total_flies'] == 10
+    assert 'frame_counts' in log['pilot_summary']
+    assert log['pilot_summary']['frame_counts']['min'] == 8990
+    assert log['pilot_summary']['frame_counts']['max'] == 9010
+    assert 8990 <= log['pilot_summary']['frame_counts']['mean'] <= 9010
+    assert log['pilot_summary']['frame_counts']['variation'] >= 0
+    
+    # Verify optimization_process section
+    assert log['optimization_process']['n_combinations_tested'] == 2
+    assert 'parameter_space' in log['optimization_process']
+    assert log['optimization_process']['parameter_space']['window_sizes'] == [200, 300]
+    assert log['optimization_process']['parameter_space']['sampling_rates'] == [0.2, 0.3]
+    assert log['optimization_process']['parameter_space']['strategies'] == ['stratified', 'uniform']
+    assert log['optimization_process']['parameter_space']['edge_thresholds'] == [10, 20]
+    assert log['optimization_process']['best_parameters']['window_size'] == 300
+    assert log['optimization_process']['best_parameters']['sampling_rate'] == 0.2
+    assert log['optimization_process']['best_parameters']['strategy'] == 'uniform'
+    assert log['optimization_process']['best_parameters']['edge_threshold'] == 20
+    
+    # Verify best_results section
+    assert log['best_results']['composite_score'] == 0.75
+    assert log['best_results']['power'] == 0.85
+    assert log['best_results']['bias'] == 0.1
+    assert log['best_results']['efficiency'] == 0.8
+    assert log['best_results']['robustness'] == 0.15
+    
+    # Verify warnings section
+    assert log['warnings'] == []
+    
+    # Verify validation_metrics section
+    assert log['validation_metrics']['total_parameters_evaluated'] == 2
+    assert log['validation_metrics']['best_composite_score'] == 0.75
+    assert log['validation_metrics']['worst_composite_score'] == 0.70
+    assert 0.70 <= log['validation_metrics']['mean_composite_score'] <= 0.75
+    assert log['validation_metrics']['std_composite_score'] >= 0
+
+
+def test_with_warnings():
+    """Test optimization with warnings included in log."""
+    pilot_data = {
+        'WT': [[(100, 150)] for _ in range(3)],
+        'KO': [[(200, 250)] for _ in range(3)]
+    }
+    
+    frame_counts = {
+        'WT': [9000, 9000, 9000],
+        'KO': [9000, 9000, 9000]
+    }
+    
+    config = {
+        'data_dir': '/data/pilot',
+        'expected_frames': 9000,
+        'alpha': 0.05,
+        'power': 0.8
+    }
+    
+    best_params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20,
+        'scores': {
+            'composite': 0.65,
+            'power': 0.70,
+            'bias': 0.12,
+            'efficiency': 0.8,
+            'robustness': 0.18
+        }
+    }
+    
+    all_results = [best_params]
+    
+    # Include warnings
+    warnings = [
+        'Genotype WT has only 3 files (minimum recommended: 10)',
+        'Genotype KO has only 3 files (minimum recommended: 10)',
+        'Best parameters achieve power of 0.70, which is below target power of 0.80'
+    ]
+    
+    # Generate log
+    log = generate_detailed_log(
+        pilot_data, frame_counts, config, best_params, all_results, warnings
+    )
+    
+    # Verify warnings are included
+    assert 'warnings' in log
+    assert len(log['warnings']) == 3
+    assert log['warnings'][0] == 'Genotype WT has only 3 files (minimum recommended: 10)'
+    assert log['warnings'][1] == 'Genotype KO has only 3 files (minimum recommended: 10)'
+    assert log['warnings'][2] == 'Best parameters achieve power of 0.70, which is below target power of 0.80'
+    
+    # Verify other sections still populated
+    assert 'timestamp' in log
+    assert 'config' in log
+    assert 'pilot_summary' in log
+    assert log['pilot_summary']['n_genotypes'] == 2
+    assert log['best_results']['power'] == 0.70
+
+
+def test_multiple_genotypes():
+    """Test multiple genotypes analyzed and documented."""
+    # Note: The function expects exactly 2 genotypes based on the script design
+    # But we verify it handles the documentation correctly
+    pilot_data = {
+        'WT': [[(100, 150), (200, 250)] for _ in range(4)],
+        'KO': [[(300, 350), (400, 450)] for _ in range(6)]
+    }
+    
+    frame_counts = {
+        'WT': [9000, 9005, 8995, 9010],
+        'KO': [9000, 9000, 8990, 9010, 9005, 9000]
+    }
+    
+    config = {
+        'data_dir': '/data/pilot',
+        'expected_frames': 9000,
+        'alpha': 0.05,
+        'power': 0.8
+    }
+    
+    best_params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20,
+        'scores': {
+            'composite': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        }
+    }
+    
+    all_results = [best_params]
+    warnings = []
+    
+    # Generate log
+    log = generate_detailed_log(
+        pilot_data, frame_counts, config, best_params, all_results, warnings
+    )
+    
+    # Verify genotype documentation
+    assert log['pilot_summary']['n_genotypes'] == 2
+    assert log['pilot_summary']['flies_per_genotype']['WT'] == 4
+    assert log['pilot_summary']['flies_per_genotype']['KO'] == 6
+    assert log['pilot_summary']['total_flies'] == 10
+    
+    # Verify frame counts aggregate correctly
+    # All frame counts: [9000, 9005, 8995, 9010, 9000, 9000, 8990, 9010, 9005, 9000]
+    assert log['pilot_summary']['frame_counts']['min'] == 8990
+    assert log['pilot_summary']['frame_counts']['max'] == 9010
+    assert 8990 <= log['pilot_summary']['frame_counts']['mean'] <= 9010
+    assert log['pilot_summary']['frame_counts']['variation'] >= 0
+
+
+def test_timestamp_format():
+    """Test timestamp is in valid ISO format."""
+    from datetime import datetime
+    
+    pilot_data = {
+        'WT': [[(100, 150)] for _ in range(2)],
+        'KO': [[(200, 250)] for _ in range(2)]
+    }
+    
+    frame_counts = {
+        'WT': [9000, 9000],
+        'KO': [9000, 9000]
+    }
+    
+    config = {
+        'data_dir': '/data/pilot',
+        'expected_frames': 9000,
+        'alpha': 0.05,
+        'power': 0.8
+    }
+    
+    best_params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20,
+        'scores': {
+            'composite': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        }
+    }
+    
+    all_results = [best_params]
+    warnings = []
+    
+    # Generate log
+    log = generate_detailed_log(
+        pilot_data, frame_counts, config, best_params, all_results, warnings
+    )
+    
+    # Verify timestamp exists
+    assert 'timestamp' in log
+    assert isinstance(log['timestamp'], str)
+    
+    # Verify ISO format by parsing it
+    try:
+        parsed_time = datetime.fromisoformat(log['timestamp'])
+        assert isinstance(parsed_time, datetime)
+    except ValueError:
+        pytest.fail("Timestamp is not in valid ISO 8601 format")
+    
+    # Verify timestamp is recent (within last minute)
+    now = datetime.now()
+    time_diff = abs((now - parsed_time).total_seconds())
+    assert time_diff < 60  # Should be generated within last 60 seconds
+
+
+def test_all_empty_csvs():
+    """Test handling when all CSVs are empty (frame_counts all 0)."""
+    # Simulates scenario where all CSV files were empty
+    pilot_data = {
+        'WT': [[], [], []],  # Empty event lists
+        'KO': [[], []]       # Empty event lists
+    }
+    
+    frame_counts = {
+        'WT': [0, 0, 0],  # All zeros (empty CSVs)
+        'KO': [0, 0]      # All zeros (empty CSVs)
+    }
+    
+    config = {
+        'data_dir': '/data/pilot',
+        'expected_frames': 9000,
+        'alpha': 0.05,
+        'power': 0.8
+    }
+    
+    best_params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20,
+        'scores': {
+            'composite': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        }
+    }
+    
+    all_results = [best_params]
+    warnings = ['All CSVs appear to be empty']
+    
+    log = generate_detailed_log(
+        pilot_data, frame_counts, config, best_params, all_results, warnings
+    )
+    
+    # Verify handling of all-zero frame counts
+    assert log['pilot_summary']['frame_counts']['min'] == 0
+    assert log['pilot_summary']['frame_counts']['max'] == 0
+    assert log['pilot_summary']['frame_counts']['mean'] == 0.0
+    assert log['pilot_summary']['frame_counts']['variation'] == 0.0  # Covers mean_frames == 0 branch
+
+
+def test_empty_frame_counts():
+    """Test defensive handling of empty frame_counts (edge case)."""
+    # This tests the function's robustness when called with empty data
+    # (unreachable in normal script flow, but good defensive programming)
+    pilot_data = {
+        'WT': [],
+        'KO': []
+    }
+    
+    frame_counts = {
+        'WT': [],
+        'KO': []
+    }
+    
+    config = {
+        'data_dir': '/data/pilot',
+        'expected_frames': 9000,
+        'alpha': 0.05,
+        'power': 0.8
+    }
+    
+    best_params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20,
+        'scores': {
+            'composite': 0.75,
+            'power': 0.85,
+            'bias': 0.1,
+            'efficiency': 0.8,
+            'robustness': 0.15
+        }
+    }
+    
+    all_results = [best_params]
+    warnings = []
+    
+    log = generate_detailed_log(
+        pilot_data, frame_counts, config, best_params, all_results, warnings
+    )
+    
+    # Verify graceful handling of empty data
+    assert log['pilot_summary']['n_genotypes'] == 2
+    assert log['pilot_summary']['total_flies'] == 0
+    assert log['pilot_summary']['frame_counts']['min'] == 0
+    assert log['pilot_summary']['frame_counts']['max'] == 0
+    assert log['pilot_summary']['frame_counts']['mean'] == 0.0
+    assert log['pilot_summary']['frame_counts']['variation'] == 0.0  # Covers len == 0 branch
