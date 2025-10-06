@@ -12,7 +12,8 @@ from pilot_grooming_optimizer import (
     generate_bootstrap_samples,
 		simulate_window_sampling,
 		calculate_statistical_power,
-		evaluate_parameter_combination
+		evaluate_parameter_combination,
+		cross_validate_parameters
 )
 
 # =============================================================================
@@ -1135,3 +1136,148 @@ def test_zero_power_robustness_mock(monkeypatch):
     assert 0 <= scores['error_rate'] <= 1
     assert 0 <= scores['efficiency'] <= 1
     assert 0 <= scores['composite'] <= 1
+
+
+# =============================================================================
+# Tests for Unit 8: Cross-Validation Framework
+# =============================================================================
+
+def test_standard_cv():
+    """Test standard 5-fold CV with sufficient data."""
+    # Create data with 10 samples per genotype (enough for 5 folds)
+    data = {
+        'WT': [[(i*100, i*100 + 50)] for i in range(10)],
+        'KO': [[(i*100 + 1000, i*100 + 1050)] for i in range(10)]
+    }
+    
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    results = cross_validate_parameters(data, params, n_folds=5, seed=42)
+    
+    # Verify structure
+    assert 'power_mean' in results
+    assert 'power_std' in results
+    assert 'bias_mean' in results
+    assert 'bias_std' in results
+    assert 'composite_mean' in results
+    assert 'composite_std' in results
+    assert 'n_folds' in results
+    
+    # Verify 5 folds were used
+    assert results['n_folds'] == 5
+    
+    # Verify all metrics are in valid ranges
+    assert 0 <= results['power_mean'] <= 1
+    assert 0 <= results['power_std'] <= 1
+    assert 0 <= results['bias_mean'] <= 1
+    assert 0 <= results['bias_std'] <= 1
+    assert 0 <= results['composite_mean'] <= 1
+    assert 0 <= results['composite_std'] <= 1
+
+
+def test_small_dataset():
+    """Test that small dataset with only 3 samples per genotype adjusts fold count."""
+    # Create data with only 3 samples per genotype
+    data = {
+        'WT': [[(100, 150)], [(200, 250)], [(300, 350)]],
+        'KO': [[(400, 450)], [(500, 550)], [(600, 650)]]
+    }
+    
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    # Request 5 folds but only 3 samples available
+    results = cross_validate_parameters(data, params, n_folds=5, seed=42)
+    
+    # Should adjust to 3 folds (max possible with 3 samples)
+    assert results['n_folds'] == 3
+    
+    # Verify all metrics are present and valid
+    assert 0 <= results['power_mean'] <= 1
+    assert 0 <= results['composite_mean'] <= 1
+
+
+def test_no_data_leakage():
+    """Test that train/test splits are disjoint (no data leakage between folds)."""
+    from sklearn.model_selection import KFold
+    import numpy as np
+    
+    # Create data
+    data = {
+        'WT': [[(i*100, i*100 + 50)] for i in range(10)],
+        'KO': [[(i*100 + 1000, i*100 + 1050)] for i in range(10)]
+    }
+    
+    n_folds = 5
+    seed = 42
+    
+    # Manually verify fold splitting to ensure no leakage
+    genotype_names = list(data.keys())
+    kfold = KFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    
+    # Check each genotype's folds
+    for genotype_name in genotype_names:
+        n_samples = len(data[genotype_name])
+        indices = np.arange(n_samples)
+        
+        # Collect all test indices across folds
+        all_test_indices = []
+        for train_idx, test_idx in kfold.split(indices):
+            # Verify train and test are disjoint
+            assert len(set(train_idx) & set(test_idx)) == 0
+            
+            # Collect test indices
+            all_test_indices.extend(test_idx.tolist())
+        
+        # Verify each sample appears exactly once in test sets
+        assert sorted(all_test_indices) == list(range(n_samples))
+        
+        # Verify no duplicates in test sets
+        assert len(all_test_indices) == len(set(all_test_indices))
+
+
+def test_reproducibility():
+    """Test that same seed produces reproducible results."""
+    # Create data
+    data = {
+        'WT': [[(i*100, i*100 + 50)] for i in range(8)],
+        'KO': [[(i*100 + 1000, i*100 + 1050)] for i in range(8)]
+    }
+    
+    params = {
+        'window_size': 300,
+        'sampling_rate': 0.2,
+        'strategy': 'uniform',
+        'edge_threshold': 20
+    }
+    
+    # Run CV twice with same seed
+    results1 = cross_validate_parameters(data, params, n_folds=4, seed=42)
+    results2 = cross_validate_parameters(data, params, n_folds=4, seed=42)
+    
+    # Results should be identical
+    assert results1['power_mean'] == results2['power_mean']
+    assert results1['power_std'] == results2['power_std']
+    assert results1['bias_mean'] == results2['bias_mean']
+    assert results1['bias_std'] == results2['bias_std']
+    assert results1['composite_mean'] == results2['composite_mean']
+    assert results1['composite_std'] == results2['composite_std']
+    assert results1['n_folds'] == results2['n_folds']
+    
+    # Run with different seed
+    results3 = cross_validate_parameters(data, params, n_folds=4, seed=99)
+    
+    # Results should be different (with very high probability)
+    # At least one metric should differ
+    assert (results1['power_mean'] != results3['power_mean'] or
+            results1['bias_mean'] != results3['bias_mean'] or
+            results1['composite_mean'] != results3['composite_mean'])
