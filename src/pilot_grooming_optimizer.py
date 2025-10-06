@@ -1143,3 +1143,341 @@ def optimize_parameter_space(
               f"which is below target power of {target_power:.4f}")
     
     return best_params, all_results
+
+
+# =============================================================================
+# Unit 10: Generate Visualization Plots
+# =============================================================================
+
+def generate_visualization_plots(
+    all_results: List[Dict],
+    output_dir: str
+) -> List[str]:
+    """
+    Create comprehensive visualization suite from optimization results.
+    
+    Generates five types of plots to help interpret parameter optimization:
+    1. Heat maps showing composite scores across parameter combinations (per strategy)
+    2. Power curves showing statistical power vs sampling rate
+    3. Pareto frontier plot identifying optimal efficiency-accuracy tradeoffs
+    4. Bias assessment showing bias distribution across strategies
+    5. Strategy comparison showing average performance by strategy
+    
+    Args:
+        all_results: List of result dictionaries from optimize_parameter_space
+                    Each dict contains:
+                    - 'window_size': int
+                    - 'sampling_rate': float
+                    - 'strategy': str
+                    - 'edge_threshold': int
+                    - 'scores': dict with 'power', 'bias', 'efficiency', 'composite'
+        output_dir: Directory path for saving plot files
+    
+    Returns:
+        List of paths to generated plot files
+    
+    Raises:
+        Nothing - handles errors gracefully for individual plots
+    
+    Plot Details:
+        - Heat Maps: One per strategy, showing composite scores across 
+                    window_size (x) and sampling_rate (y)
+        - Power Curves: Line plot with sampling_rate (x) vs power (y),
+                       separate lines for each window size
+        - Pareto Frontier: Scatter of efficiency (x) vs power (y),
+                          highlighting Pareto-optimal points
+        - Bias Assessment: Box plots showing bias distribution by strategy
+        - Strategy Comparison: Bar chart of average composite scores by strategy
+    
+    Notes:
+        - Creates output_dir if it doesn't exist
+        - Each plot failure is caught independently (one failure won't stop others)
+        - All plots saved as PDF at 300 dpi
+        - Uses color-blind friendly palettes
+        - Handles edge cases (single param, NaN/inf values, empty data)
+    
+    Example:
+        >>> all_results = [
+        ...     {'window_size': 100, 'sampling_rate': 0.2, 'strategy': 'uniform',
+        ...      'edge_threshold': 10, 'scores': {'power': 0.8, 'bias': 0.1,
+        ...      'efficiency': 0.8, 'composite': 0.7}},
+        ...     # ... more results
+        ... ]
+        >>> plot_paths = generate_visualization_plots(all_results, 'output/plots/')
+        >>> len(plot_paths) > 0
+        True
+    """
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import pandas as pd
+    import numpy as np
+    
+    # Create output directory if it doesn't exist
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Initialize list to track generated plots
+    plot_paths = []
+    
+    # Convert results to DataFrame for easier manipulation
+    try:
+        # Flatten results structure
+        data_rows = []
+        for result in all_results:
+            row = {
+                'window_size': result['window_size'],
+                'sampling_rate': result['sampling_rate'],
+                'strategy': result['strategy'],
+                'edge_threshold': result['edge_threshold'],
+                'power': result['scores']['power'],
+                'bias': result['scores']['bias'],
+                'efficiency': result['scores']['efficiency'],
+                'robustness': result['scores']['robustness'],
+                'composite': result['scores']['composite']
+            }
+            data_rows.append(row)
+        
+        df = pd.DataFrame(data_rows)
+        
+        # Replace inf and NaN values with appropriate substitutes
+        df = df.replace([np.inf, -np.inf], np.nan)
+				
+        # Filter out rows where critical columns are NaN
+        df = df.dropna(subset=['strategy', 'window_size', 'sampling_rate'])
+
+    except Exception as e:
+        print(f"Warning: Could not convert results to DataFrame: {e}")
+        return plot_paths
+    
+    # Set seaborn style and color palette (color-blind friendly)
+    sns.set_style("whitegrid")
+    sns.set_palette("colorblind")
+    
+    # 1. Heat Maps (one per strategy)
+    try:
+        strategies = df['strategy'].unique()
+        for strategy_name in strategies:
+            strategy_data = df[df['strategy'] == strategy_name].copy()
+            
+            # Skip if no data for this strategy
+            if len(strategy_data) == 0:
+                continue
+            
+            # Create pivot table for heatmap
+            pivot_data = strategy_data.pivot_table(
+                values='composite',
+                index='sampling_rate',
+                columns='window_size',
+                aggfunc='mean'
+            )
+            
+            # Skip if pivot table is empty
+            if pivot_data.empty:
+                continue
+            
+            # Create heatmap
+            fig, ax = plt.subplots(figsize=(10, 8))
+            sns.heatmap(
+                pivot_data,
+                annot=True,
+                fmt='.3f',
+                cmap='viridis',
+                cbar_kws={'label': 'Composite Score'},
+                ax=ax
+            )
+            ax.set_xlabel('Window Size (frames)', fontsize=12)
+            ax.set_ylabel('Sampling Rate', fontsize=12)
+            ax.set_title(f'Composite Score Heat Map - {strategy_name.capitalize()} Strategy',
+                        fontsize=14, fontweight='bold')
+            
+            # Save plot
+            plot_file = output_path / f'heatmap_{strategy_name}.pdf'
+            plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+            plt.close()
+            plot_paths.append(str(plot_file))
+            
+    except Exception as e:
+        print(f"Warning: Could not generate heat maps: {e}")
+    
+    # 2. Power Curves
+    try:
+        # Get unique window sizes
+        window_sizes = sorted(df['window_size'].unique())
+        
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        for window_size in window_sizes:
+            window_data = df[df['window_size'] == window_size].copy()
+            
+            # Group by sampling rate and average power
+            grouped = window_data.groupby('sampling_rate')['power'].mean().reset_index()
+            grouped = grouped.sort_values('sampling_rate')
+            
+            ax.plot(
+                grouped['sampling_rate'],
+                grouped['power'],
+                marker='o',
+                label=f'Window={window_size}',
+                linewidth=2
+            )
+        
+        ax.set_xlabel('Sampling Rate', fontsize=12)
+        ax.set_ylabel('Statistical Power', fontsize=12)
+        ax.set_title('Power Curves by Window Size', fontsize=14, fontweight='bold')
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.set_ylim([0, 1.05])
+        
+        # Save plot
+        plot_file = output_path / 'power_curves.pdf'
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        plot_paths.append(str(plot_file))
+        
+    except Exception as e:
+        print(f"Warning: Could not generate power curves: {e}")
+    
+    # 3. Pareto Frontier
+    try:
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Calculate Pareto frontier
+        # A point is Pareto-optimal if no other point has both higher efficiency AND higher power
+        pareto_mask = []
+        for idx, row in df.iterrows():
+            is_pareto = True
+            for _, other_row in df.iterrows():
+                # Check if other point dominates this point
+                if (other_row['efficiency'] > row['efficiency'] and 
+                    other_row['power'] > row['power']):
+                    is_pareto = False
+                    break
+            pareto_mask.append(is_pareto)
+        
+        df['is_pareto'] = pareto_mask
+        
+        # Plot non-Pareto points
+        non_pareto = df[~df['is_pareto']]
+        ax.scatter(
+            non_pareto['efficiency'],
+            non_pareto['power'],
+            alpha=0.5,
+            s=50,
+            c='gray',
+            label='Non-Pareto'
+        )
+        
+        # Plot Pareto-optimal points
+        pareto_points = df[df['is_pareto']]
+        ax.scatter(
+            pareto_points['efficiency'],
+            pareto_points['power'],
+            alpha=0.8,
+            s=100,
+            c='red',
+            marker='*',
+            label='Pareto-Optimal',
+            edgecolors='black',
+            linewidths=1.5
+        )
+        
+        ax.set_xlabel('Efficiency (Time Saved)', fontsize=12)
+        ax.set_ylabel('Statistical Power', fontsize=12)
+        ax.set_title('Pareto Frontier: Efficiency vs. Power', fontsize=14, fontweight='bold')
+        ax.legend(fontsize=10)
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim([0, 1.05])
+        ax.set_ylim([0, 1.05])
+        
+        # Save plot
+        plot_file = output_path / 'pareto_frontier.pdf'
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        plot_paths.append(str(plot_file))
+        
+    except Exception as e:
+        print(f"Warning: Could not generate Pareto frontier: {e}")
+    
+    # 4. Bias Assessment
+    try:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Prepare data for box plot
+        strategies = sorted(df['strategy'].unique())
+        bias_data = [df[df['strategy'] == s]['bias'].dropna().values for s in strategies]
+        
+        # Create box plot
+        bp = ax.boxplot(
+            bias_data,
+            tick_labels=[s.capitalize() for s in strategies],
+            patch_artist=True,
+            showmeans=True
+        )
+        
+        # Color the boxes
+        colors = sns.color_palette("colorblind", len(strategies))
+        for patch, color in zip(bp['boxes'], colors):
+            patch.set_facecolor(color)
+            patch.set_alpha(0.7)
+        
+        ax.set_xlabel('Sampling Strategy', fontsize=12)
+        ax.set_ylabel('Bias (normalized)', fontsize=12)
+        ax.set_title('Bias Distribution by Sampling Strategy', fontsize=14, fontweight='bold')
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # Save plot
+        plot_file = output_path / 'bias_assessment.pdf'
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        plot_paths.append(str(plot_file))
+        
+    except Exception as e:
+        print(f"Warning: Could not generate bias assessment: {e}")
+    
+    # 5. Strategy Comparison
+    try:
+        fig, ax = plt.subplots(figsize=(10, 6))
+        
+        # Calculate average composite score by strategy
+        strategy_scores = df.groupby('strategy')['composite'].mean().reset_index()
+        strategy_scores = strategy_scores.sort_values('composite', ascending=False)
+        
+        # Create bar chart
+        bars = ax.bar(
+            [s.capitalize() for s in strategy_scores['strategy']],
+            strategy_scores['composite'],
+            color=sns.color_palette("colorblind", len(strategy_scores)),
+            alpha=0.8,
+            edgecolor='black',
+            linewidth=1.5
+        )
+        
+        # Add value labels on bars
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(
+                bar.get_x() + bar.get_width() / 2.,
+                height,
+                f'{height:.3f}',
+                ha='center',
+                va='bottom',
+                fontsize=11,
+                fontweight='bold'
+            )
+        
+        ax.set_xlabel('Sampling Strategy', fontsize=12)
+        ax.set_ylabel('Average Composite Score', fontsize=12)
+        ax.set_title('Strategy Performance Comparison', fontsize=14, fontweight='bold')
+        ax.set_ylim([0, 1.05])
+        ax.grid(True, alpha=0.3, axis='y')
+        
+        # Save plot
+        plot_file = output_path / 'strategy_comparison.pdf'
+        plt.savefig(plot_file, dpi=300, bbox_inches='tight')
+        plt.close()
+        plot_paths.append(str(plot_file))
+        
+    except Exception as e:
+        print(f"Warning: Could not generate strategy comparison: {e}")
+    
+    return plot_paths
