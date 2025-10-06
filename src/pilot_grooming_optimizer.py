@@ -4,8 +4,12 @@ import argparse
 import sys
 from pathlib import Path
 from typing import List, Dict, Tuple
-
-from common_library import load_event_csv, process_directory_structure, calculate_all_behavioral_metrics
+from common_library import (
+    load_event_csv,
+    process_directory_structure,
+    calculate_all_behavioral_metrics,
+    write_json_output
+)
 
 # =============================================================================
 # Unit 1: Parse Command Line Arguments
@@ -2018,3 +2022,270 @@ def generate_pdf_report(
         # Log error but don't crash
         print(f"Error generating PDF report: {e}")
         raise
+
+
+# ============================================================================= 
+# Unit 13: Main Orchestration Function
+# =============================================================================
+
+def main(args: List[str] = None, n_bootstrap: int = 10000) -> int:
+    """
+    Main orchestration function for Pilot Grooming Optimizer.
+    
+    Executes the complete optimization pipeline:
+    1. Parse command line arguments
+    2. Load pilot data from directory structure
+    3. Generate parameter space for optimization
+    4. Optimize parameters across the space
+    5. Generate visualization plots
+    6. Create detailed log
+    7. Write optimization results to JSON
+    8. Write optimization log to JSON
+    9. Generate comprehensive PDF report
+    
+    Args:
+        args: Command line arguments (default: sys.argv[1:])
+        n_bootstrap: Number of bootstrap iterations (default: 10000)
+    
+    Returns:
+        Exit code: 0 for success, 1 for failure
+    
+    Example:
+        >>> exit_code = main(['--data-dir', 'data', '--output', 'results.json'])
+        >>> print(exit_code)
+        0
+    """
+    if args is None:
+        args = sys.argv[1:]
+    
+    # Track which files were created for cleanup on failure
+    created_files = []
+    
+    try:
+        # =====================================================================
+        # Step 1: Parse Arguments
+        # =====================================================================
+        print("="*70)
+        print("PILOT GROOMING OPTIMIZER")
+        print("="*70)
+        print("\n[1/9] Parsing command line arguments...")
+        
+        config = parse_arguments(args)
+        print(f"  ✓ Data directory: {config['data_dir']}")
+        print(f"  ✓ Output file: {config['output']}")
+        print(f"  ✓ Expected frames: {config['expected_frames']}")
+        print(f"  ✓ Alpha: {config['alpha']}")
+        print(f"  ✓ Power: {config['power']}")
+        
+        # =====================================================================
+        # Step 2: Load Pilot Data
+        # =====================================================================
+        print("\n[2/9] Loading pilot data...")
+        
+        pilot_data, frame_counts = load_pilot_data(config['data_dir'])
+        
+        # Calculate summary statistics
+        total_genotypes = len(pilot_data)
+        total_flies = sum(len(flies) for flies in pilot_data.values())
+        
+        print(f"  ✓ Loaded {total_genotypes} genotypes")
+        print(f"  ✓ Total flies: {total_flies}")
+        for genotype, flies in pilot_data.items():
+            print(f"    - {genotype}: {len(flies)} flies")
+        
+        # =====================================================================
+        # Step 3: Generate Parameter Space
+        # =====================================================================
+        print("\n[3/9] Generating parameter space...")
+        
+        parameter_space = generate_parameter_space(frame_counts)
+        
+        # Calculate total combinations
+        n_combinations = (
+            len(parameter_space['window_sizes']) *
+            len(parameter_space['sampling_rates']) *
+            len(parameter_space['strategies']) *
+            len(parameter_space['edge_thresholds'])
+        )
+        
+        print(f"  ✓ Window sizes: {len(parameter_space['window_sizes'])} options")
+        print(f"  ✓ Sampling rates: {len(parameter_space['sampling_rates'])} options")
+        print(f"  ✓ Strategies: {len(parameter_space['strategies'])} options")
+        print(f"  ✓ Edge thresholds: {len(parameter_space['edge_thresholds'])} options")
+        print(f"  ✓ Total combinations to evaluate: {n_combinations}")
+        
+        # =====================================================================
+        # Step 4: Run Optimization
+        # =====================================================================
+        print(f"\n[4/9] Running optimization (this may take several minutes)...")
+        print(f"  Evaluating {n_combinations} parameter combinations...")
+        print(f"  Bootstrap iterations per combination: {n_bootstrap}")
+        
+        best_params, all_results = optimize_parameter_space(
+            pilot_data,
+            parameter_space,
+            config,
+            n_bootstrap=n_bootstrap
+        )
+        
+        print(f"\n  ✓ Optimization complete!")
+        print(f"\n  Best Parameters Found:")
+        print(f"    - Window size: {best_params['window_size']} frames")
+        print(f"    - Sampling rate: {best_params['sampling_rate']}")
+        print(f"    - Strategy: {best_params['strategy']}")
+        print(f"    - Edge threshold: {best_params['edge_threshold']} frames")
+        print(f"\n  Performance Metrics:")
+        print(f"    - Statistical power: {best_params['scores']['power']:.3f}")
+        print(f"    - Bias: {best_params['scores']['bias']:.3f}")
+        print(f"    - Efficiency: {best_params['scores']['efficiency']:.3f}")
+        print(f"    - Robustness: {best_params['scores']['robustness']:.3f}")
+        print(f"    - Composite score: {best_params['scores']['composite']:.3f}")
+        
+        # =====================================================================
+        # Step 5: Generate Visualizations
+        # =====================================================================
+        print("\n[5/9] Generating visualization plots...")
+        
+        # Determine output directory from output path
+        output_path = Path(config['output'])
+        plots_dir = output_path.parent / "plots"
+        
+        plot_paths = generate_visualization_plots(all_results, str(plots_dir))
+        
+        print(f"  ✓ Generated {len(plot_paths)} plots")
+        for plot_path in plot_paths:
+            print(f"    - {Path(plot_path).name}")
+            created_files.append(plot_path)
+        
+        # =====================================================================
+        # Step 6: Generate Detailed Log
+        # =====================================================================
+        print("\n[6/9] Creating detailed optimization log...")
+        
+        # Collect any warnings from the process
+        warnings = []
+        
+        log_data = generate_detailed_log(
+            pilot_data,
+            frame_counts,
+            config,
+            best_params,
+            all_results,
+            warnings
+        )
+        
+        print(f"  ✓ Log created with {len(log_data)} sections")
+        
+        # =====================================================================
+        # Step 7: Write optimization_results.json
+        # =====================================================================
+        print("\n[7/9] Writing optimization results...")
+        
+        results_path = config['output']
+        write_json_output(best_params, results_path)
+        created_files.append(results_path)
+        
+        print(f"  ✓ Results saved to: {results_path}")
+        
+        # =====================================================================
+        # Step 8: Write optimization_log.json
+        # =====================================================================
+        print("\n[8/9] Writing optimization log...")
+        
+        log_path = output_path.parent / "optimization_log.json"
+        write_json_output(log_data, str(log_path))
+        created_files.append(str(log_path))
+        
+        print(f"  ✓ Log saved to: {log_path}")
+        
+        # =====================================================================
+        # Step 9: Generate PDF Report
+        # =====================================================================
+        print("\n[9/9] Generating PDF report...")
+        
+        report_path = output_path.parent / "optimization_report.pdf"
+        generate_pdf_report(log_data, plot_paths, str(report_path))
+        created_files.append(str(report_path))
+        
+        print(f"  ✓ Report saved to: {report_path}")
+        
+        # =====================================================================
+        # Success Summary
+        # =====================================================================
+        print("\n" + "="*70)
+        print("OPTIMIZATION COMPLETE!")
+        print("="*70)
+        print(f"\nOutput files created:")
+        print(f"  1. Results: {results_path}")
+        print(f"  2. Log: {log_path}")
+        print(f"  3. Report: {report_path}")
+        print(f"  4. Plots: {plots_dir}/ ({len(plot_paths)} files)")
+        print(f"\nBest composite score: {best_params['scores']['composite']:.3f}")
+        print(f"Statistical power: {best_params['scores']['power']:.3f}")
+        print("\nRecommendation: Apply these parameters to your full dataset.")
+        print("="*70 + "\n")
+        
+        return 0
+        
+    except KeyboardInterrupt:
+        print("\n\n[!] Optimization interrupted by user (Ctrl+C)")
+        print("Cleaning up partial outputs...")
+        _cleanup_files(created_files)
+        print("Cleanup complete. Exiting gracefully.")
+        return 1
+        
+    except FileNotFoundError as e:
+        print(f"\n[ERROR] File not found: {e}")
+        print("Please check that the data directory exists and contains valid CSV files.")
+        _cleanup_files(created_files)
+        return 1
+        
+    except ValueError as e:
+        print(f"\n[ERROR] Invalid input: {e}")
+        print("Please check your command line arguments and data files.")
+        _cleanup_files(created_files)
+        return 1
+        
+    except PermissionError as e:
+        print(f"\n[ERROR] Permission denied: {e}")
+        print("Please check that you have write permissions for the output directory.")
+        _cleanup_files(created_files)
+        return 1
+        
+    except OSError as e:
+        print(f"\n[ERROR] File system error: {e}")
+        print("Please check disk space and file system permissions.")
+        _cleanup_files(created_files)
+        return 1
+        
+    except Exception as e:
+        print(f"\n[ERROR] Unexpected error occurred: {e}")
+        print("Please report this issue with the error message above.")
+        _cleanup_files(created_files)
+        return 1
+
+
+def _cleanup_files(file_paths: List[str]) -> None:
+    """
+    Clean up partial output files on failure.
+    
+    Args:
+        file_paths: List of file paths to remove
+    """
+    for file_path in file_paths:
+        try:
+            path = Path(file_path)
+            if path.exists():
+                if path.is_file():
+                    path.unlink()
+                elif path.is_dir():
+                    import shutil
+                    shutil.rmtree(path)
+        except Exception:
+            # Silently ignore cleanup errors
+            pass
+
+
+if __name__ == '__main__':
+    exit_code = main()
+    sys.exit(exit_code)
