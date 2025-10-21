@@ -58,3 +58,5 @@ requirements.txt
 
 # PPE Framework
 .ppe/
+/data/
+/reports/

@@ -213,10 +213,6 @@ def load_pilot_data(data_dir: str) -> Tuple[Dict[str, List[List[Tuple[int, int]]
     return pilot_data, frame_counts
 
 
-# =============================================================================
-# Unit 3: Generate Parameter Space
-# =============================================================================
-
 def generate_parameter_space(frame_counts: Dict[str, List[int]]) -> Dict:
     """
     Generate valid parameter combinations based on shortest video.
@@ -241,7 +237,8 @@ def generate_parameter_space(frame_counts: Dict[str, List[int]]) -> Dict:
         2. Find all divisors of shortest_frames
         3. Apply selection tiers:
            - Primary: divisors ≥ 100 AND multiples of 25
-           - Fallback: divisors ≥ 100 (if primary yields none)
+           - Fallback 1: divisors ≥ 100 (if primary yields none)
+           - Fallback 2: multiples of 25 ≥ 100 (if fallback 1 yields none)
         4. Raise ValueError if no valid window sizes found
     
     Raises:
@@ -296,8 +293,19 @@ def generate_parameter_space(frame_counts: Dict[str, List[int]]) -> Dict:
     if primary_candidates:
         window_sizes = primary_candidates
     else:
-        # Fallback: all divisors ≥ 100
-        window_sizes = valid_divisors
+        # Fallback 1: all divisors ≥ 100
+        if valid_divisors:
+            window_sizes = valid_divisors
+        else:
+            # Fallback 2: multiples of 25 ≥ 100 (not necessarily divisors)
+            window_sizes = [w for w in range(100, shortest_frames + 1, 25)]
+    
+    # Final validation: ensure we have at least some window sizes
+    if not window_sizes:
+        raise ValueError(
+            f"Could not generate valid window sizes for video with {shortest_frames} frames. "
+            f"This should not happen if shortest_frames >= 100."
+        )
     
     # Return parameter space dictionary
     return {
