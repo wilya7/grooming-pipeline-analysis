@@ -654,11 +654,11 @@ def evaluate_parameter_combination(
 ) -> Dict[str, float]:
     """
     Comprehensively evaluate one parameter combination.
-    
+
     Evaluates a parameter combination by simulating window sampling across
     bootstrap iterations and calculating multiple performance scores including
     statistical power, bias, error rate, efficiency, and robustness.
-    
+
     Args:
         pilot_data: Complete pilot dataset by genotype
                    Structure: {genotype_name: [fly1_events, fly2_events, ...]}
@@ -672,7 +672,7 @@ def evaluate_parameter_combination(
                - power: Target statistical power (for reference)
                - expected_frames: Expected frame count per video
         n_bootstrap: Bootstrap iterations (default: 10000)
-    
+
     Returns:
         Dictionary containing evaluation scores:
         - 'power': Average statistical power (0-1)
@@ -681,10 +681,11 @@ def evaluate_parameter_combination(
         - 'efficiency': Time saved based on sampling_rate (0-1, higher is better)
         - 'robustness': CV of power across iterations (0-1+, lower is better)
         - 'composite': Weighted composite score (0-1, higher is better)
-    
+
     Composite Score Formula:
-        composite = 0.4 * power + 0.2 * (1 - bias) + 0.2 * efficiency + 0.2 * (1 - robustness)
-    
+        composite = 0.25 * power + 0.25 * (1 - bias) + 0.20 * (1 - error_rate) + 
+                   0.15 * efficiency + 0.15 * (1 - robustness)
+
     Example:
         >>> pilot_data = {
         ...     'WT': [[(100, 150), (200, 250)], [(300, 400)]],
@@ -703,24 +704,24 @@ def evaluate_parameter_combination(
     """
     from tqdm import tqdm
     import numpy as np
-    
+
     # Extract parameters
     window_size = params['window_size']
     sampling_rate = params['sampling_rate']
     strategy = params['strategy']
     edge_threshold = params['edge_threshold']
-    
+
     # Extract config
     alpha = config['alpha']
     expected_frames = config['expected_frames']
-    
+
     # Get genotype names (should be exactly 2)
     genotype_names = list(pilot_data.keys())
     if len(genotype_names) != 2:
         raise ValueError(f"Expected 2 genotypes, got {len(genotype_names)}")
-    
+
     genotype1, genotype2 = genotype_names[0], genotype_names[1]
-    
+
     # Calculate ground truth metrics for each genotype (aggregate all flies)
     ground_truth = {}
     for genotype_name in genotype_names:
@@ -733,7 +734,7 @@ def evaluate_parameter_combination(
             expected_frames
         )
         ground_truth[genotype_name] = gt_metrics
-    
+
     # Generate bootstrap samples for each genotype
     bootstrap_samples = {}
     for genotype_name in genotype_names:
@@ -742,12 +743,12 @@ def evaluate_parameter_combination(
             n_samples=n_bootstrap,
             seed=42
         )
-    
+
     # Initialize tracking arrays
     power_scores = []
     bias_scores = []
     edge_percentages = []
-    
+
     # Iterate through bootstrap samples with progress bar
     for i in tqdm(range(n_bootstrap), desc="Evaluating parameters"):
         # For this bootstrap iteration, collect fly-level metrics for each genotype
@@ -829,17 +830,17 @@ def evaluate_parameter_combination(
         else:
             edge_pct = 0.0
         edge_percentages.append(edge_pct)
-    
+
     # Calculate final scores
-    
+
     # Power: average across iterations
     avg_power = float(np.mean(power_scores))
-    
+
     # Bias: average bias normalized to 0-1 scale
     avg_bias = float(np.mean(bias_scores))
     max_bias = 10.0  # Assume max reasonable bias is 10 events/min
     normalized_bias = min(avg_bias / max_bias, 1.0)
-    
+
     # Error rate: based on edge events exceeding threshold
     avg_edge_percentage = float(np.mean(edge_percentages))
     if avg_edge_percentage > edge_threshold:
@@ -847,10 +848,10 @@ def evaluate_parameter_combination(
     else:
         error_rate = 0.0
     error_rate = min(error_rate, 1.0)  # Cap at 1.0
-    
+
     # Efficiency: inverse of sampling rate (more sampling = less efficient)
     efficiency = 1.0 - sampling_rate
-    
+
     # Robustness: CV of power across iterations
     if avg_power > 0:
         std_power = float(np.std(power_scores))
@@ -859,13 +860,15 @@ def evaluate_parameter_combination(
         robustness_cv = 0.0
     # Normalize to 0-1 scale (assume max CV is 1.0)
     normalized_robustness = min(robustness_cv / 1.0, 1.0)
-    
-    # Calculate composite score
-    composite = (0.4 * avg_power + 
-                 0.2 * (1 - normalized_bias) + 
-                 0.2 * efficiency + 
-                 0.2 * (1 - normalized_robustness))
-    
+
+    # Calculate composite score with CORRECT weights per specification
+    # Weights: power (25%), bias (25%), error rates (20%), efficiency (15%), robustness (15%)
+    composite = (0.25 * avg_power +
+                 0.25 * (1 - normalized_bias) +
+                 0.20 * (1 - error_rate) +
+                 0.15 * efficiency +
+                 0.15 * (1 - normalized_robustness))
+
     return {
         'power': avg_power,
         'bias': normalized_bias,
@@ -874,7 +877,7 @@ def evaluate_parameter_combination(
         'robustness': normalized_robustness,
         'composite': composite
     }
-
+				
 
 # =============================================================================
 # Unit 8: Cross-Validation Framework
