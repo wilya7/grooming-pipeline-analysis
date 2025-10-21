@@ -325,7 +325,7 @@ def test_mixed_frame_counts(tmp_path):
     assert len(pilot_data["genotype_B"]) == 1
 
 
-# =============================================================================
+# ============================================================================= 
 # Tests for Unit 3: Generate Parameter Space
 # =============================================================================
 
@@ -393,7 +393,7 @@ def test_very_short_video():
     with pytest.raises(ValueError, match="Shortest video has .* frames, which is below the minimum"):
         generate_parameter_space(frame_counts)
 
-				
+
 def test_mixed_frame_counts():
     """Test that shortest video determines window sizes."""
     frame_counts = {
@@ -408,20 +408,20 @@ def test_mixed_frame_counts():
     for size in params['window_sizes']:
         assert size >= 100
         assert 8900 % size == 0  # Must divide evenly into shortest video
-        
+    
     # Verify that a divisor of 9000 that doesn't divide 8900 is NOT included
     # Example: 450 divides 9000 but not 8900
     # 8900 = 2^2 × 5^2 × 89, so 450 (2 × 3^2 × 5^2) doesn't divide it
     assert 450 not in params['window_sizes']
 
 
-def test_fallback_triggered():
-    """Test that fallback triggers when no divisors are multiples of 25."""
+def test_fallback_1_triggered():
+    """Test that Fallback 1 triggers when no divisors are multiples of 25."""
     # Use 101 frames (prime number)
     # Divisors: 1, 101
     # valid_divisors: [101] (meets >= 100 threshold)
     # primary_candidates: [] (101 % 25 = 1, not a multiple of 25)
-    # Should use fallback: all valid_divisors
+    # Should use Fallback 1: all valid_divisors
     frame_counts = {
         'WT': [101, 101],
         'KO': [101]
@@ -435,15 +435,109 @@ def test_fallback_triggered():
     assert 'strategies' in params
     assert 'edge_thresholds' in params
     
-    # Verify fallback was used: got [101] even though it's not a multiple of 25
+    # Verify Fallback 1 was used: got [101] even though it's not a multiple of 25
     assert params['window_sizes'] == [101]
     assert 101 >= 100  # Meets minimum threshold
-    assert 101 % 25 != 0  # Not a multiple of 25 (proves fallback was used)
+    assert 101 % 25 != 0  # Not a multiple of 25 (proves Fallback 1 was used)
     
     # Verify fixed parameters unchanged
     assert params['sampling_rates'] == [0.05, 0.075, 0.10, 0.125, 0.15, 0.20, 0.25, 0.30]
     assert params['strategies'] == ['uniform', 'stratified', 'systematic']
     assert params['edge_thresholds'] == [5, 10, 15, 20, 25, 30]
+
+
+def test_fallback_1_with_prime_103():
+    """Test Fallback 1 with another prime number (103)."""
+    # 103 is prime, so divisors are 1 and 103
+    # valid_divisors: [103]
+    # primary_candidates: [] (103 % 25 = 3, not a multiple of 25)
+    # Should use Fallback 1: [103]
+    frame_counts = {
+        'WT': [103, 103, 103],
+        'KO': [103, 103]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    
+    # Verify Fallback 1 was used
+    assert params['window_sizes'] == [103]
+    assert 103 >= 100
+    assert 103 % 25 != 0  # Not a multiple of 25
+
+
+def test_fallback_2_theoretically_unreachable():
+    """Test that Fallback 2 logic exists but is theoretically unreachable.
+    
+    Fallback 2 is for multiples of 25 >= 100 that are NOT divisors.
+    However, if shortest_frames >= 100, then shortest_frames itself is
+    always a valid divisor >= 100, so valid_divisors is never empty.
+    Therefore, Fallback 2 cannot be reached in practice.
+    
+    This test documents that the code exists as defensive programming.
+    """
+    # Any frame count >= 100 will have itself as a valid divisor
+    # So valid_divisors will never be empty, and Fallback 2 won't trigger
+    
+    # Test with 100 (smallest valid value)
+    frame_counts = {'WT': [100], 'KO': [100]}
+    params = generate_parameter_space(frame_counts)
+    
+    # 100 is its own divisor, so we get [100] from either Primary or Fallback 1
+    assert 100 in params['window_sizes']
+    
+    # Test with 101 (prime, but still has itself as divisor)
+    frame_counts = {'WT': [101], 'KO': [101]}
+    params = generate_parameter_space(frame_counts)
+    
+    # 101 is its own divisor, so valid_divisors = [101], triggers Fallback 1
+    assert params['window_sizes'] == [101]
+    
+    # The logic for Fallback 2 exists in the code but is unreachable
+    # because any valid shortest_frames >= 100 is itself a divisor >= 100
+
+
+def test_window_sizes_sorted():
+    """Test that window sizes are returned in sorted order."""
+    frame_counts = {
+        'WT': [9000, 9000],
+        'KO': [9000]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    window_sizes = params['window_sizes']
+    
+    # Verify sorted in ascending order
+    assert window_sizes == sorted(window_sizes)
+
+
+def test_window_sizes_no_duplicates():
+    """Test that window sizes contain no duplicates."""
+    frame_counts = {
+        'WT': [9000, 9000, 9000],
+        'KO': [9000, 9000]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    window_sizes = params['window_sizes']
+    
+    # Verify no duplicates
+    assert len(window_sizes) == len(set(window_sizes))
+
+
+def test_window_sizes_all_valid_divisors():
+    """Test that all returned window sizes are valid divisors of shortest frame count."""
+    frame_counts = {
+        'WT': [1200, 1300],
+        'KO': [1200, 1250]
+    }
+    
+    params = generate_parameter_space(frame_counts)
+    shortest = 1200
+    
+    # All window sizes should divide evenly into shortest
+    for size in params['window_sizes']:
+        assert shortest % size == 0
+        assert size >= 100
 
 
 # =============================================================================
