@@ -1763,8 +1763,8 @@ def generate_pdf_report(
             
             # ==================== PAGE 1: TITLE PAGE ====================
             fig = plt.figure(figsize=(8.5, 11))
-            fig.suptitle('Pilot Grooming Optimization Report', 
-                        fontsize=24, fontweight='bold', y=0.85)
+            fig.suptitle('Pilot Grooming Optimization Report',
+                         fontsize=24, fontweight='bold', y=0.85)
             
             # Add timestamp
             timestamp = log_data.get('timestamp', datetime.now().isoformat())
@@ -1866,10 +1866,11 @@ def generate_pdf_report(
             method_text += "Method: Exhaustive grid search\n"
             method_text += "Bootstrap Iterations: 10,000 per combination\n"
             method_text += "Scoring: Composite score (weighted combination)\n"
-            method_text += "  - Power: 40%\n"
-            method_text += "  - Bias: 20%\n"
-            method_text += "  - Efficiency: 20%\n"
-            method_text += "  - Robustness: 20%\n\n"
+            method_text += "  - Power: 25%\n"
+            method_text += "  - Bias: 25%\n"
+            method_text += "  - Error Rate: 20%\n"
+            method_text += "  - Efficiency: 15%\n"
+            method_text += "  - Robustness: 15%\n\n"
             
             # Pilot data summary
             pilot_summary = log_data.get('pilot_summary', {})
@@ -1911,8 +1912,8 @@ def generate_pdf_report(
                     
                     # Add title
                     plot_name = plot_file.stem.replace('_', ' ').title()
-                    fig.suptitle(f'Results: {plot_name}', 
-                                fontsize=16, fontweight='bold', y=0.98)
+                    fig.suptitle(f'Results: {plot_name}',
+                                 fontsize=16, fontweight='bold', y=0.98)
                     
                     # Add reference to plot file
                     # Note: Actual embedding of PDF plots would require additional libraries
