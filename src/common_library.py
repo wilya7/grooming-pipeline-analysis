@@ -12,76 +12,94 @@ import json
 # Unit 1: Load Event CSV
 # =============================================================================
 
-def load_event_csv(filepath: str, validate: bool = True) -> List[Tuple[int, int]]:
+def load_event_csv(csv_path, validate=True):
     """
-    Load and validate grooming events from standard CSV format.
+    Load grooming events from CSV file.
     
-    Events are represented as consecutive pairs of frames where the first frame
-    indicates the start of a grooming bout and the second frame indicates the end.
+    Expected format: EventID,StartFrame,StopFrame
+    Example:
+        EventID,StartFrame,StopFrame
+        1,234,567
+        2,1200,1456
+        3,2000,2150
     
     Args:
-        filepath: Path to the event-based CSV file
-        validate: Whether to validate event integrity (default: True)
+        csv_path: Path to CSV file
+        validate: Whether to validate event data (default: True)
     
     Returns:
-        List of (start_frame, end_frame) tuples representing grooming events
+        List of (start_frame, end_frame) tuples
     
     Raises:
-        ValueError: If validation fails or 'Frame' column is missing
-    
-    Example:
-        >>> events = load_event_csv('grooming_events.csv')
-        >>> print(events)
-        [(100, 150), (200, 250)]
+        ValueError: If CSV format is invalid or validation fails
+        FileNotFoundError: If csv_path does not exist
     """
-    # Read the CSV file
+    import pandas as pd
+    from pathlib import Path
+    
+    # Check file exists
+    if not Path(csv_path).exists():
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
+    
+    # Read CSV
     try:
-        df = pd.read_csv(filepath)
+        df = pd.read_csv(csv_path)
     except Exception as e:
-        raise ValueError(f"Error reading CSV file: {e}")
+        raise ValueError(f"Failed to read CSV file {csv_path}: {e}")
     
-    # Check for 'Frame' column
-    if 'Frame' not in df.columns:
-        raise ValueError("CSV file must contain a 'Frame' column")
+    # Check for required columns
+    if 'StartFrame' not in df.columns or 'StopFrame' not in df.columns:
+        raise ValueError(
+            f"CSV file {csv_path} must contain 'StartFrame' and 'StopFrame' columns. "
+            f"Found columns: {list(df.columns)}"
+        )
     
-    # Extract frame numbers
-    frames = df['Frame'].dropna().astype(int).tolist()
-    
-    # Handle empty CSV
-    if len(frames) == 0:
+    # Handle empty CSV (no events)
+    if len(df) == 0:
         return []
     
-    # Validation checks
-    if validate:
-        # Check for even number of frames
-        if len(frames) % 2 != 0:
-            raise ValueError(
-                f"Invalid event pairing: found {len(frames)} frames, "
-                f"but events require an even number of frames (pairs of start/end)"
-            )
-        
-        # Check each pair: start < end (do this BEFORE chronological check)
-        for i in range(0, len(frames), 2):
-            start_frame = frames[i]
-            end_frame = frames[i + 1]
-            if start_frame >= end_frame:
-                raise ValueError(
-                    f"Invalid event at frames {start_frame}-{end_frame}: "
-                    f"start frame must be less than end frame"
-                )
-        
-        # Check chronological order
-        for i in range(len(frames) - 1):
-            if frames[i] >= frames[i + 1]:
-                raise ValueError(
-                    f"Frames must be in chronological order: "
-                    f"frame at index {i} ({frames[i]}) >= frame at index {i+1} ({frames[i+1]})"
-                )
+    # Convert to list of tuples
+    events = list(zip(df['StartFrame'].astype(int), df['StopFrame'].astype(int)))
     
-    # Create pairs of (start_frame, end_frame)
-    # Only pair complete pairs (handle odd numbers gracefully when validate=False)
-    num_complete_pairs = len(frames) // 2
-    events = [(frames[i], frames[i + 1]) for i in range(0, num_complete_pairs * 2, 2)]
+    # Validation
+    if validate:
+        for i, (start, end) in enumerate(events):
+            # Check for negative frames
+            if start < 0 or end < 0:
+                raise ValueError(
+                    f"Event {i+1} in {csv_path}: Negative frame numbers not allowed "
+                    f"(start={start}, end={end})"
+                )
+            
+            # Check start < end
+            if start > end:
+                raise ValueError(
+                    f"Event {i+1} in {csv_path}: StartFrame ({start}) must be <= StopFrame ({end})"
+                )
+            
+            # Check for zero-duration events (optional warning, not error)
+            if start == end:
+                print(f"Warning: Event {i+1} in {csv_path} has zero duration (frame {start})")
+        
+        # Check for overlapping events (events should not overlap)
+        for i in range(len(events) - 1):
+            current_end = events[i][1]
+            next_start = events[i+1][0]
+            if current_end >= next_start:
+                raise ValueError(
+                    f"Events {i+1} and {i+2} in {csv_path} overlap: "
+                    f"Event {i+1} ends at frame {current_end}, "
+                    f"Event {i+2} starts at frame {next_start}"
+                )
+        
+        # Check for non-increasing event order
+        for i in range(len(events) - 1):
+            if events[i][0] >= events[i+1][0]:
+                raise ValueError(
+                    f"Events in {csv_path} are not in chronological order: "
+                    f"Event {i+1} starts at {events[i][0]}, "
+                    f"Event {i+2} starts at {events[i+1][0]}"
+                )
     
     return events
 
