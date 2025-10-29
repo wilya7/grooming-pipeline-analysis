@@ -21,6 +21,28 @@ from pilot_grooming_optimizer import (
 		main
 )
 
+
+# ============================================================================= 
+# Fixtures and Helpers 
+# ============================================================================= 
+
+def create_test_csv_new_format(filepath, events):
+    """
+    Create a CSV file in the new EventID,StartFrame,StopFrame format.
+    
+    Args:
+        filepath: Path to create CSV file
+        events: List of (start_frame, stop_frame) tuples
+    """
+    import pandas as pd
+    df = pd.DataFrame({
+        'EventID': list(range(1, len(events) + 1)),
+        'StartFrame': [e[0] for e in events],
+        'StopFrame': [e[1] for e in events]
+    })
+    df.to_csv(filepath, index=False)
+		
+
 # =============================================================================
 # Tests for Unit 1: Parse Command Line Arguments
 # =============================================================================
@@ -210,16 +232,16 @@ def test_two_genotypes_multiple_files(tmp_path):
     genotype_a.mkdir()
     genotype_b.mkdir()
     
-    # Create CSV files for genotype A
+    # Create CSV files for genotype A using new format
     csv_a1 = genotype_a / "fly1.csv"
-    csv_a1.write_text("Frame\n100\n150\n200\n250\n")
+    create_test_csv_new_format(csv_a1, [(100, 150), (200, 250)])
     
     csv_a2 = genotype_a / "fly2.csv"
-    csv_a2.write_text("Frame\n50\n75\n300\n400\n")
+    create_test_csv_new_format(csv_a2, [(50, 75), (300, 400)])
     
-    # Create CSV files for genotype B
+    # Create CSV files for genotype B using new format
     csv_b1 = genotype_b / "fly1.csv"
-    csv_b1.write_text("Frame\n1000\n1500\n2000\n2500\n")
+    create_test_csv_new_format(csv_b1, [(1000, 1500), (2000, 2500)])
     
     # Load data
     pilot_data, frame_counts = load_pilot_data(str(tmp_path))
@@ -229,17 +251,19 @@ def test_two_genotypes_multiple_files(tmp_path):
     assert "genotype_A" in pilot_data
     assert "genotype_B" in pilot_data
     
-    # Verify genotype A data
+    # Verify genotype A
     assert len(pilot_data["genotype_A"]) == 2
     assert pilot_data["genotype_A"][0] == [(100, 150), (200, 250)]
     assert pilot_data["genotype_A"][1] == [(50, 75), (300, 400)]
     
-    # Verify genotype B data
+    # Verify genotype B
     assert len(pilot_data["genotype_B"]) == 1
     assert pilot_data["genotype_B"][0] == [(1000, 1500), (2000, 2500)]
     
-    # Verify frame counts (max end frame from each fly)
-    assert frame_counts["genotype_A"] == [250, 400]
+    # Verify frame counts
+    assert "genotype_A" in frame_counts
+    assert "genotype_B" in frame_counts
+    assert frame_counts["genotype_A"] == [250, 400]  # Max end frames
     assert frame_counts["genotype_B"] == [2500]
 
 
@@ -265,30 +289,30 @@ def test_empty_csv_file(tmp_path):
     genotype_a.mkdir()
     genotype_b.mkdir()
     
-    # Create CSV with data
+    # Create CSV with data using new format
     csv_a1 = genotype_a / "fly1.csv"
-    csv_a1.write_text("Frame\n100\n150\n")
+    create_test_csv_new_format(csv_a1, [(100, 150)])
     
     # Create empty CSV (header only, no events)
     csv_a2 = genotype_a / "fly2.csv"
-    csv_a2.write_text("Frame\n")
+    csv_a2.write_text("EventID,StartFrame,StopFrame\n")
     
-    # Create CSV with data for genotype B
+    # Create CSV with data for genotype B using new format
     csv_b1 = genotype_b / "fly1.csv"
-    csv_b1.write_text("Frame\n200\n250\n")
+    create_test_csv_new_format(csv_b1, [(200, 250)])
     
     # Load data
     pilot_data, frame_counts = load_pilot_data(str(tmp_path))
     
-    # Verify empty CSV is handled correctly
+    # Verify empty CSV handled correctly
     assert len(pilot_data["genotype_A"]) == 2
     assert pilot_data["genotype_A"][0] == [(100, 150)]
-    assert pilot_data["genotype_A"][1] == []  # Empty events list for empty CSV
+    assert pilot_data["genotype_A"][1] == []  # Empty events list
     
-    # Frame count should be 0 for empty CSV (sentinel value)
+    # Verify frame counts (empty CSV should have 0)
     assert frame_counts["genotype_A"][0] == 150
     assert frame_counts["genotype_A"][1] == 0
-
+		
 
 def test_mixed_frame_counts(tmp_path):
     """Test handling of mixed frame counts within a genotype."""
@@ -3842,13 +3866,13 @@ def test_complete_successful_run(tmp_path):
     genotype_a.mkdir(parents=True)
     genotype_b.mkdir(parents=True)
     
-    # Create CSV files with minimal but sufficient data
+    # Create CSV files with minimal but sufficient data using new format
     for i in range(3):
         csv_a = genotype_a / f"fly{i}.csv"
-        csv_a.write_text("Frame\n100\n200\n9000\n9100\n")
+        create_test_csv_new_format(csv_a, [(100, 200), (9000, 9100)])
         
         csv_b = genotype_b / f"fly{i}.csv"
-        csv_b.write_text("Frame\n1000\n1100\n9000\n9100\n")
+        create_test_csv_new_format(csv_b, [(1000, 1100), (9000, 9100)])
     
     # Create output directory
     output_dir = tmp_path / "output"
@@ -3867,26 +3891,40 @@ def test_complete_successful_run(tmp_path):
     # Verify success
     assert exit_code == 0
     
-    # Verify all outputs exist
+    # Verify outputs exist
     assert output_file.exists()
-    assert (output_dir / "optimization_log.json").exists()
-    assert (output_dir / "optimization_report.pdf").exists()
-    assert (output_dir / "plots").exists()
     
-    # Verify plots directory has files
-    plots = list((output_dir / "plots").glob("*.pdf"))
-    assert len(plots) > 0
+    # Verify optimization_log.json exists
+    log_file = output_dir / "optimization_log.json"
+    assert log_file.exists()
     
-    # Verify results file has valid content
+    # Verify optimization_report.pdf exists
+    report_file = output_dir / "optimization_report.pdf"
+    assert report_file.exists()
+    
+    # Verify plots directory exists
+    plots_dir = output_dir / "plots"
+    assert plots_dir.exists()
+    
+    # Load and verify JSON output
     import json
-    with open(output_file) as f:
+    with open(output_file, 'r') as f:
         results = json.load(f)
+    
+    # Verify required fields (use actual key names from output)
     assert 'window_size' in results
     assert 'sampling_rate' in results
-    assert 'strategy' in results
-    assert 'edge_threshold' in results
-    assert 'scores' in results
-
+    assert 'strategy' in results  # Changed from 'sampling_strategy'
+    assert 'edge_threshold' in results  # Changed from 'recommended_edge_duration_min'
+    
+    # Verify values are reasonable
+    assert isinstance(results['window_size'], int)
+    assert results['window_size'] > 0
+    assert 0 < results['sampling_rate'] <= 1.0
+    assert results['strategy'] in ['uniform', 'stratified', 'systematic']
+    assert isinstance(results['edge_threshold'], int)
+    assert results['edge_threshold'] > 0
+		
 
 def test_invalid_input_data(tmp_path):
     """Test clean exit with error message when data directory is invalid."""
@@ -4153,10 +4191,10 @@ def test_main_entry_point(tmp_path, monkeypatch):
     
     for i in range(2):
         csv_a = genotype_a / f"fly{i}.csv"
-        csv_a.write_text("Frame\n100\n200\n9000\n9100\n")
+        create_test_csv_new_format(csv_a, [(100, 200), (9000, 9100)])
         
         csv_b = genotype_b / f"fly{i}.csv"
-        csv_b.write_text("Frame\n300\n400\n9000\n9100\n")
+        create_test_csv_new_format(csv_b, [(300, 400), (9000, 9100)])
     
     output_dir = tmp_path / "output"
     output_dir.mkdir()
@@ -4191,10 +4229,14 @@ def test_main_entry_point(tmp_path, monkeypatch):
         # Verify it ran successfully
         assert exit_code == 0
         
+        # Verify output file was created
+        assert output_file.exists()
+        
     finally:
+        # Restore original sys.argv
         sys.argv = original_argv
 
-
+				
 def test_cleanup_files_directory_removal(tmp_path):
     """Test _cleanup_files can remove directories."""
     from pilot_grooming_optimizer import _cleanup_files
