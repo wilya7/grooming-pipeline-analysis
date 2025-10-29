@@ -20,139 +20,275 @@ from src.common_library import (
 )
 
 
-# =============================================================================
-# Fixtures and Helpers
-# =============================================================================
+# ============================================================================= 
+# Fixtures and Helpers 
+# =============================================================================  
 
-@pytest.fixture
-def temp_csv_file():
-    """Create a temporary CSV file for testing."""
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:
-        filepath = f.name
-    yield filepath
-    # Cleanup
-    if os.path.exists(filepath):
-        os.unlink(filepath)
+@pytest.fixture 
+def temp_csv_file():     
+    """Create a temporary CSV file for testing."""     
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False) as f:         
+        filepath = f.name     
+    yield filepath     
+    # Cleanup     
+    if os.path.exists(filepath):         
+        os.unlink(filepath)   
 
 
-def create_csv_with_frames(filepath: str, frames: list, column_name: str = 'Frame'):
-    """Helper function to create a CSV file with given frames."""
-    df = pd.DataFrame({column_name: frames})
+def create_csv_with_events(filepath: str, events: list):
+    """
+    Helper function to create a CSV file with EventID,StartFrame,StopFrame format.
+    
+    Args:
+        filepath: Path to create CSV file
+        events: List of (start_frame, stop_frame) tuples
+    
+    Example:
+        create_csv_with_events('test.csv', [(100, 150), (200, 250)])
+    """
+    df = pd.DataFrame({
+        'EventID': list(range(1, len(events) + 1)),
+        'StartFrame': [e[0] for e in events],
+        'StopFrame': [e[1] for e in events]
+    })
     df.to_csv(filepath, index=False)
 
 
-# =============================================================================
-# Unit 1 Tests: load_event_csv
-# =============================================================================
+# ============================================================================= 
+# Unit 1 Tests: load_event_csv 
+# =============================================================================  
 
-def test_valid_csv_multiple_events(temp_csv_file):
-    """Test loading a valid CSV with multiple grooming events."""
-    frames = [100, 150, 200, 250, 300, 400]
-    create_csv_with_frames(temp_csv_file, frames)
+def test_valid_csv_multiple_events(temp_csv_file):     
+    """Test loading a valid CSV with multiple grooming events."""     
+    events = [(100, 150), (200, 250), (300, 400)]
+    create_csv_with_events(temp_csv_file, events)
     
-    events = load_event_csv(temp_csv_file)
+    loaded_events = load_event_csv(temp_csv_file)
     
-    assert len(events) == 3
-    assert events[0] == (100, 150)
-    assert events[1] == (200, 250)
-    assert events[2] == (300, 400)
-    assert all(isinstance(event, tuple) for event in events)
-    assert all(len(event) == 2 for event in events)
+    assert len(loaded_events) == 3
+    assert loaded_events[0] == (100, 150)
+    assert loaded_events[1] == (200, 250)
+    assert loaded_events[2] == (300, 400)
+    assert all(isinstance(event, tuple) for event in loaded_events)
+    assert all(len(event) == 2 for event in loaded_events)
 
 
-def test_odd_number_of_frames(temp_csv_file):
-    """Test that odd number of frames raises ValueError."""
-    frames = [100, 150, 200]  # 3 frames - odd number
-    create_csv_with_frames(temp_csv_file, frames)
+def test_non_chronological_events(temp_csv_file):     
+    """Test that non-chronological events raise ValueError."""     
+    events = [(100, 150), (140, 200), (300, 400)]  # Second event starts before first ends
+    create_csv_with_events(temp_csv_file, events)
     
     with pytest.raises(ValueError) as exc_info:
         load_event_csv(temp_csv_file)
     
-    assert "even number of frames" in str(exc_info.value).lower()
-    assert "3 frames" in str(exc_info.value)
+    # Update assertion - this is actually an overlap error, which is correct
+    assert "overlap" in str(exc_info.value).lower()
 
 
-def test_non_chronological_frames(temp_csv_file):
-    """Test that non-chronological frames raise ValueError."""
-    frames = [100, 150, 140, 200]  # 140 comes after 150
-    create_csv_with_frames(temp_csv_file, frames)
+def test_start_greater_than_end(temp_csv_file):     
+    """Test that start frame > end frame raises ValueError."""     
+    events = [(100, 150), (250, 200)]  # Second event: start=250, end=200
+    create_csv_with_events(temp_csv_file, events)
     
     with pytest.raises(ValueError) as exc_info:
         load_event_csv(temp_csv_file)
     
-    assert "chronological order" in str(exc_info.value).lower()
-
-
-def test_start_greater_than_end(temp_csv_file):
-    """Test that start frame > end frame raises ValueError."""
-    frames = [100, 150, 250, 200]  # Second event: start=250, end=200
-    create_csv_with_frames(temp_csv_file, frames)
-    
-    with pytest.raises(ValueError) as exc_info:
-        load_event_csv(temp_csv_file)
-    
-    assert "start frame must be less than end frame" in str(exc_info.value).lower()
+    assert "startframe" in str(exc_info.value).lower()
+    assert "stopframe" in str(exc_info.value).lower()
     assert "250" in str(exc_info.value)
     assert "200" in str(exc_info.value)
 
 
-def test_empty_csv(temp_csv_file):
-    """Test that an empty CSV returns an empty list."""
-    create_csv_with_frames(temp_csv_file, [])
+def test_overlapping_events(temp_csv_file):
+    """Test that overlapping events raise ValueError."""
+    events = [(100, 200), (150, 250)]  # Events overlap
+    create_csv_with_events(temp_csv_file, events)
     
-    events = load_event_csv(temp_csv_file)
+    with pytest.raises(ValueError) as exc_info:
+        load_event_csv(temp_csv_file)
     
-    assert events == []
-    assert isinstance(events, list)
+    assert "overlap" in str(exc_info.value).lower()
 
 
-def test_missing_frame_column(temp_csv_file):
-    """Test that missing 'Frame' column raises ValueError."""
-    # Create CSV with wrong column name
-    df = pd.DataFrame({'WrongColumn': [100, 150, 200, 250]})
+def test_negative_frame_numbers(temp_csv_file):
+    """Test that negative frame numbers raise ValueError."""
+    events = [(-10, 50), (100, 150)]
+    create_csv_with_events(temp_csv_file, events)
+    
+    with pytest.raises(ValueError) as exc_info:
+        load_event_csv(temp_csv_file)
+    
+    assert "negative frame" in str(exc_info.value).lower()
+
+
+def test_empty_csv(temp_csv_file):     
+    """Test that an empty CSV returns an empty list."""     
+    create_csv_with_events(temp_csv_file, [])
+    
+    loaded_events = load_event_csv(temp_csv_file)
+    
+    assert loaded_events == []
+    assert isinstance(loaded_events, list)
+
+
+def test_missing_required_columns(temp_csv_file):     
+    """Test that missing required columns raises ValueError."""     
+    # Create CSV with wrong column names
+    df = pd.DataFrame({
+        'EventID': [1, 2],
+        'Start': [100, 200],  # Wrong column name
+        'Stop': [150, 250]    # Wrong column name
+    })
     df.to_csv(temp_csv_file, index=False)
     
     with pytest.raises(ValueError) as exc_info:
         load_event_csv(temp_csv_file)
     
-    assert "Frame" in str(exc_info.value)
-    assert "column" in str(exc_info.value).lower()
+    assert "StartFrame" in str(exc_info.value)
+    assert "StopFrame" in str(exc_info.value)
 
 
-def test_validation_disabled(temp_csv_file):
-    """Test that validation can be disabled."""
-    # Create invalid data (odd number of frames)
-    frames = [100, 150, 200]
-    create_csv_with_frames(temp_csv_file, frames)
-    
-    # Should not raise error when validate=False
-    events = load_event_csv(temp_csv_file, validate=False)
-    
-    assert len(events) == 1
-    assert events[0] == (100, 150)
-
-
-def test_single_event_csv(temp_csv_file):
-    """Test loading a CSV with a single grooming event."""
-    frames = [100, 150]
-    create_csv_with_frames(temp_csv_file, frames)
-    
-    events = load_event_csv(temp_csv_file)
-    
-    assert len(events) == 1
-    assert events[0] == (100, 150)
-
-
-def test_invalid_file_path(temp_csv_file):
-    """Test that invalid file path raises ValueError."""
-    # Delete the file to make it invalid
-    os.unlink(temp_csv_file)
+def test_missing_startframe_column(temp_csv_file):
+    """Test that missing StartFrame column raises ValueError."""
+    df = pd.DataFrame({
+        'EventID': [1, 2],
+        'StopFrame': [150, 250]
+    })
+    df.to_csv(temp_csv_file, index=False)
     
     with pytest.raises(ValueError) as exc_info:
         load_event_csv(temp_csv_file)
     
-    assert "Error reading CSV file" in str(exc_info.value)
+    assert "StartFrame" in str(exc_info.value)
 
+
+def test_missing_stopframe_column(temp_csv_file):
+    """Test that missing StopFrame column raises ValueError."""
+    df = pd.DataFrame({
+        'EventID': [1, 2],
+        'StartFrame': [100, 200]
+    })
+    df.to_csv(temp_csv_file, index=False)
+    
+    with pytest.raises(ValueError) as exc_info:
+        load_event_csv(temp_csv_file)
+    
+    assert "StopFrame" in str(exc_info.value)
+
+
+def test_validation_disabled(temp_csv_file):     
+    """Test that validation can be disabled."""     
+    # Create invalid data (start > end)
+    events = [(100, 150), (250, 200)]  # Second event invalid
+    create_csv_with_events(temp_csv_file, events)
+    
+    # Should not raise error when validate=False
+    loaded_events = load_event_csv(temp_csv_file, validate=False)
+    
+    assert len(loaded_events) == 2
+    assert loaded_events[0] == (100, 150)
+    assert loaded_events[1] == (250, 200)
+
+
+def test_single_event_csv(temp_csv_file):     
+    """Test loading a CSV with a single grooming event."""     
+    events = [(100, 150)]
+    create_csv_with_events(temp_csv_file, events)
+    
+    loaded_events = load_event_csv(temp_csv_file)
+    
+    assert len(loaded_events) == 1
+    assert loaded_events[0] == (100, 150)
+
+
+def test_invalid_file_path(temp_csv_file):     
+    """Test that invalid file path raises FileNotFoundError."""     
+    # Delete the file to make it invalid     
+    os.unlink(temp_csv_file)
+    
+    with pytest.raises(FileNotFoundError) as exc_info:
+        load_event_csv(temp_csv_file)
+    
+    assert "not found" in str(exc_info.value).lower()
+
+
+def test_zero_duration_event_warning(temp_csv_file, capsys):
+    """Test that zero-duration events generate a warning."""
+    events = [(100, 100), (200, 250)]  # First event has zero duration
+    create_csv_with_events(temp_csv_file, events)
+    
+    loaded_events = load_event_csv(temp_csv_file)
+    
+    # Should load successfully
+    assert len(loaded_events) == 2
+    assert loaded_events[0] == (100, 100)
+    
+    # Check that warning was printed
+    captured = capsys.readouterr()
+    assert "Warning" in captured.out
+    assert "zero duration" in captured.out.lower()
+
+
+def test_eventid_not_required(temp_csv_file):
+    """Test that EventID column is not required (only StartFrame/StopFrame needed)."""
+    # Create CSV without EventID column
+    df = pd.DataFrame({
+        'StartFrame': [100, 200, 300],
+        'StopFrame': [150, 250, 400]
+    })
+    df.to_csv(temp_csv_file, index=False)
+    
+    loaded_events = load_event_csv(temp_csv_file)
+    
+    assert len(loaded_events) == 3
+    assert loaded_events[0] == (100, 150)
+    assert loaded_events[1] == (200, 250)
+    assert loaded_events[2] == (300, 400)
+
+
+def test_additional_columns_ignored(temp_csv_file):
+    """Test that additional columns are ignored (only StartFrame/StopFrame used)."""
+    df = pd.DataFrame({
+        'EventID': [1, 2, 3],
+        'StartFrame': [100, 200, 300],
+        'StopFrame': [150, 250, 400],
+        'Duration': [50, 50, 100],
+        'Notes': ['good', 'bad', 'excellent']
+    })
+    df.to_csv(temp_csv_file, index=False)
+    
+    loaded_events = load_event_csv(temp_csv_file)
+    
+    assert len(loaded_events) == 3
+    assert loaded_events[0] == (100, 150)
+    assert loaded_events[1] == (200, 250)
+    assert loaded_events[2] == (300, 400)
+
+
+def test_corrupted_csv_file(temp_csv_file):
+    """Test that corrupted CSV file raises ValueError."""
+    # Write invalid CSV content
+    with open(temp_csv_file, 'w') as f:
+        f.write("This is not valid CSV content\n")
+        f.write("Random text here\n")
+    
+    with pytest.raises(ValueError) as exc_info:
+        load_event_csv(temp_csv_file)
+    
+    assert "Failed to read CSV" in str(exc_info.value) or "StartFrame" in str(exc_info.value)
+
+
+def test_large_frame_numbers(temp_csv_file):
+    """Test that large frame numbers are handled correctly."""
+    events = [(1000000, 1000500), (2000000, 2000300)]
+    create_csv_with_events(temp_csv_file, events)
+    
+    loaded_events = load_event_csv(temp_csv_file)
+    
+    assert len(loaded_events) == 2
+    assert loaded_events[0] == (1000000, 1000500)
+    assert loaded_events[1] == (2000000, 2000300)
+		
 
 # =============================================================================
 # Unit 2 Tests: calculate_event_frequency
